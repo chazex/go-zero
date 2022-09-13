@@ -16,6 +16,7 @@ func (d *directBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ 
 		return r == EndpointSepChar
 	})
 
+	// 打乱所有连接，取前32个
 	for _, val := range subset(endpoints, subsetSize) {
 		addrs = append(addrs, resolver.Address{
 			Addr: val,

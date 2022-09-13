@@ -16,10 +16,14 @@ type (
 
 	// A Publisher can be used to publish the value to an etcd cluster on the given key.
 	Publisher struct {
-		endpoints  []string
-		key        string
-		fullKey    string
-		id         int64
+		// etcd 地址
+		endpoints []string
+		// etcd key
+		key string
+		// 存储到etcd中的真实key
+		fullKey string
+		id      int64
+		// 服务监听地址
 		value      string
 		lease      clientv3.LeaseID
 		quit       *syncx.DoneChan
@@ -51,30 +55,36 @@ func NewPublisher(endpoints []string, key, value string, opts ...PubOption) *Pub
 
 // KeepAlive keeps key:value alive.
 func (p *Publisher) KeepAlive() error {
+	// 获取etcd实例：得到的cli是原生的etcd client
 	cli, err := internal.GetRegistry().GetConn(p.endpoints)
 	if err != nil {
 		return err
 	}
 
+	// 存储到etcd
 	p.lease, err = p.register(cli)
 	if err != nil {
 		return err
 	}
 
+	// 注册监听函数，当服务关闭时，需要关闭服务注册
 	proc.AddWrapUpListener(func() {
 		p.Stop()
 	})
 
+	// 异步持续续租lease
 	return p.keepAliveAsync(cli)
 }
 
 // Pause pauses the renewing of key:value.
 func (p *Publisher) Pause() {
+	// 暂停续约
 	p.pauseChan <- lang.Placeholder
 }
 
 // Resume resumes the renewing of key:value.
 func (p *Publisher) Resume() {
+	// 恢复续约
 	p.resumeChan <- lang.Placeholder
 }
 
@@ -84,6 +94,8 @@ func (p *Publisher) Stop() {
 }
 
 func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
+	// cli是原生的etcd client.
+	// 保持租约
 	ch, err := cli.KeepAlive(cli.Ctx(), p.lease)
 	if err != nil {
 		return err
@@ -94,7 +106,9 @@ func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 			select {
 			case _, ok := <-ch:
 				if !ok {
+					// channel关闭，此时一般是出错了。废弃lease，并重新初始化
 					p.revoke(cli)
+					// 重新初始化
 					if err := p.KeepAlive(); err != nil {
 						logx.Errorf("KeepAlive: %s", err.Error())
 					}
@@ -102,17 +116,22 @@ func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 				}
 			case <-p.pauseChan:
 				logx.Infof("paused etcd renew, key: %s, value: %s", p.key, p.value)
+				// 废弃lease
 				p.revoke(cli)
 				select {
 				case <-p.resumeChan:
+					// 接收到恢复指令：目前没找到那里会下发这个指令
 					if err := p.KeepAlive(); err != nil {
 						logx.Errorf("KeepAlive: %s", err.Error())
 					}
 					return
 				case <-p.quit.Done():
+					// 这里是程序正常退出，服务下线.
 					return
 				}
 			case <-p.quit.Done():
+				// 这里是程序正常退出，服务下线，删除租约.
+				// 服务收到退出信号，开始依次执行每一个wrapUpListeners，此时会执行p.Stop()，就会关闭这个channel
 				p.revoke(cli)
 				return
 			}
@@ -122,7 +141,9 @@ func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 	return nil
 }
 
+// 将服务地址存储到etcd
 func (p *Publisher) register(client internal.EtcdClient) (clientv3.LeaseID, error) {
+	// 创建一个新的租约
 	resp, err := client.Grant(client.Ctx(), TimeToLive)
 	if err != nil {
 		return clientv3.NoLease, err
@@ -134,11 +155,13 @@ func (p *Publisher) register(client internal.EtcdClient) (clientv3.LeaseID, erro
 	} else {
 		p.fullKey = makeEtcdKey(p.key, int64(lease))
 	}
+	// key，val（服务监听地址），租约put到etcd server
 	_, err = client.Put(client.Ctx(), p.fullKey, p.value, clientv3.WithLease(lease))
 
 	return lease, err
 }
 
+// 废弃lease
 func (p *Publisher) revoke(cli internal.EtcdClient) {
 	if _, err := cli.Revoke(cli.Ctx(), p.lease); err != nil {
 		logx.Error(err)

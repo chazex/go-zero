@@ -13,6 +13,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// 超时拦截器：通过异步执行hander（在goroutine中执行），然后用select监听channel，得到超时、执行结果、panic结果等。
+
 // UnaryTimeoutInterceptor returns a func that sets timeout to incoming unary requests.
 func UnaryTimeoutInterceptor(timeout time.Duration) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,

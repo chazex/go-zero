@@ -73,6 +73,8 @@ func WithSubEtcdTLS(certFile, certKeyFile, caFile string, insecureSkipVerify boo
 	}
 }
 
+// container 实现接口UpdateListener，他作为监听事件处理器
+
 type container struct {
 	exclusive bool
 	values    map[string][]string

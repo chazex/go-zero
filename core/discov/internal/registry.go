@@ -26,6 +26,7 @@ var (
 
 // A Registry is a registry that manages the etcd client connections.
 type Registry struct {
+	//key是etcd的hosts列表排序值，值是hosts对应的cluster.以此来达到单例cluster
 	clusters map[string]*cluster
 	lock     sync.Mutex
 }
@@ -38,6 +39,7 @@ func GetRegistry() *Registry {
 // GetConn returns an etcd client connection associated with given endpoints.
 func (r *Registry) GetConn(endpoints []string) (EtcdClient, error) {
 	c, _ := r.getCluster(endpoints)
+	// 得到的cli是原生的etcd client
 	return c.getClient()
 }
 
@@ -46,6 +48,8 @@ func (r *Registry) Monitor(endpoints []string, key string, l UpdateListener) err
 	c, exists := r.getCluster(endpoints)
 	// if exists, the existing values should be updated to the listener.
 	if exists {
+		// 内存中的kv传递给监听器.
+		// 这里设计的目的是：防止etcd集群出现故障，这样内存中的数据依然可用，不会大规模的影响服务
 		kvs := c.getCurrent(key)
 		for _, kv := range kvs {
 			l.OnAdd(kv)
@@ -69,8 +73,10 @@ func (r *Registry) getCluster(endpoints []string) (c *cluster, exists bool) {
 }
 
 type cluster struct {
-	endpoints  []string
-	key        string
+	endpoints []string
+	// endpoints 排序后，拼接成的字符串。目的是，标识一个etcd连接，用于单例初始化（在ResourceManager中）
+	key string
+	// {etcdhosts1: {key1: val1, key2: val2}, etcdhost2: {key11: val11, key22: val22}}
 	values     map[string]map[string]string
 	listeners  map[string][]UpdateListener
 	watchGroup *threading.RoutineGroup
@@ -93,8 +99,11 @@ func (c *cluster) context(cli EtcdClient) context.Context {
 	return contextx.ValueOnlyFrom(cli.Ctx())
 }
 
+// 获取一个单例EtcdClient，单例是通过connManager来管理的。
 func (c *cluster) getClient() (EtcdClient, error) {
+	// 通过资源管理器，来实现singleflight创建client
 	val, err := connManager.GetResource(c.key, func() (io.Closer, error) {
+		// 这里返回的是原生的Etcd Client
 		return c.newClient()
 	})
 	if err != nil {
@@ -119,6 +128,7 @@ func (c *cluster) getCurrent(key string) []KV {
 	return kvs
 }
 
+// 依据参数kvs，和缓存进行对比，将新增和删除事件，通知到各个监听器
 func (c *cluster) handleChanges(key string, kvs []KV) {
 	var add []KV
 	var remove []KV
@@ -126,17 +136,21 @@ func (c *cluster) handleChanges(key string, kvs []KV) {
 	listeners := append([]UpdateListener(nil), c.listeners[key]...)
 	vals, ok := c.values[key]
 	if !ok {
+		// 没有缓存，新列表值，全部视为新增
 		add = kvs
 		vals = make(map[string]string)
 		for _, kv := range kvs {
 			vals[kv.Key] = kv.Val
 		}
+		// 更新缓存为新值列表
 		c.values[key] = vals
 	} else {
+		// 有缓存
 		m := make(map[string]string)
 		for _, kv := range kvs {
 			m[kv.Key] = kv.Val
 		}
+		// 缓存(vals)中有，新列表(m)中没有，则应该删除
 		for k, v := range vals {
 			if val, ok := m[k]; !ok || v != val {
 				remove = append(remove, KV{
@@ -145,6 +159,7 @@ func (c *cluster) handleChanges(key string, kvs []KV) {
 				})
 			}
 		}
+		// 新列表(m)中有，缓存(vals)中没有，则应该添加
 		for k, v := range m {
 			if val, ok := vals[k]; !ok || v != val {
 				add = append(add, KV{
@@ -153,15 +168,18 @@ func (c *cluster) handleChanges(key string, kvs []KV) {
 				})
 			}
 		}
+		// 更新缓存为新值列表
 		c.values[key] = m
 	}
 	c.lock.Unlock()
 
+	// 通知监听器添加
 	for _, kv := range add {
 		for _, l := range listeners {
 			l.OnAdd(kv)
 		}
 	}
+	// 通知监听器删除
 	for _, kv := range remove {
 		for _, l := range listeners {
 			l.OnDelete(kv)
@@ -169,7 +187,9 @@ func (c *cluster) handleChanges(key string, kvs []KV) {
 	}
 }
 
+// 通过调用事件监听者，来处理事件
 func (c *cluster) handleWatchEvents(key string, events []*clientv3.Event) {
+	// 获取事件变更监听者
 	c.lock.Lock()
 	listeners := append([]UpdateListener(nil), c.listeners[key]...)
 	c.lock.Unlock()
@@ -178,12 +198,14 @@ func (c *cluster) handleWatchEvents(key string, events []*clientv3.Event) {
 		switch ev.Type {
 		case clientv3.EventTypePut:
 			c.lock.Lock()
+			// 将变更，更新到缓存
 			if vals, ok := c.values[key]; ok {
 				vals[string(ev.Kv.Key)] = string(ev.Kv.Value)
 			} else {
 				c.values[key] = map[string]string{string(ev.Kv.Key): string(ev.Kv.Value)}
 			}
 			c.lock.Unlock()
+			// PUT事件，依次调用监听者的OnAdd方法
 			for _, l := range listeners {
 				l.OnAdd(KV{
 					Key: string(ev.Kv.Key),
@@ -192,10 +214,12 @@ func (c *cluster) handleWatchEvents(key string, events []*clientv3.Event) {
 			}
 		case clientv3.EventTypeDelete:
 			c.lock.Lock()
+			// 将变更，更新到缓存
 			if vals, ok := c.values[key]; ok {
 				delete(vals, string(ev.Kv.Key))
 			}
 			c.lock.Unlock()
+			// DELETE事件，依次调用监听者的OnDelete方法
 			for _, l := range listeners {
 				l.OnDelete(KV{
 					Key: string(ev.Kv.Key),
@@ -208,6 +232,7 @@ func (c *cluster) handleWatchEvents(key string, events []*clientv3.Event) {
 	}
 }
 
+// 从etcd获取key前缀的值
 func (c *cluster) load(cli EtcdClient, key string) int64 {
 	var resp *clientv3.GetResponse
 	for {
@@ -237,16 +262,20 @@ func (c *cluster) load(cli EtcdClient, key string) int64 {
 }
 
 func (c *cluster) monitor(key string, l UpdateListener) error {
+	// 添加监听器
 	c.lock.Lock()
 	c.listeners[key] = append(c.listeners[key], l)
 	c.lock.Unlock()
 
+	// 得到的cli是原生的etcd client
 	cli, err := c.getClient()
 	if err != nil {
 		return err
 	}
 
+	// 第一次初始化服务列表：从etcd server，获取到所有服务列表，并通知到各个事件处理器
 	rev := c.load(cli, key)
+	// 启动协程监听key前缀变更事件，接收到事件后，调用各个事件处理器
 	c.watchGroup.Run(func() {
 		c.watch(cli, key, rev)
 	})
@@ -254,6 +283,7 @@ func (c *cluster) monitor(key string, l UpdateListener) error {
 	return nil
 }
 
+// 创建etcd client
 func (c *cluster) newClient() (EtcdClient, error) {
 	cli, err := NewClient(c.endpoints)
 	if err != nil {
@@ -287,6 +317,7 @@ func (c *cluster) reload(cli EtcdClient) {
 }
 
 func (c *cluster) watch(cli EtcdClient, key string, rev int64) {
+	// 用一个死循环，来处理watch错误情况
 	for {
 		if c.watchStream(cli, key, rev) {
 			return
@@ -294,6 +325,7 @@ func (c *cluster) watch(cli EtcdClient, key string, rev int64) {
 	}
 }
 
+// 监听etcd key前缀变化事件
 func (c *cluster) watchStream(cli EtcdClient, key string, rev int64) bool {
 	var rch clientv3.WatchChan
 	if rev != 0 {
@@ -318,6 +350,7 @@ func (c *cluster) watchStream(cli EtcdClient, key string, rev int64) bool {
 				return false
 			}
 
+			// 变更事件处理
 			c.handleWatchEvents(key, wresp.Events)
 		case <-c.done:
 			return true

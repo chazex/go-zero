@@ -23,6 +23,7 @@ type RpcServer struct {
 func MustNewServer(c RpcServerConf, register internal.RegisterFn) *RpcServer {
 	server, err := NewServer(c, register)
 	if err != nil {
+		// 出错程序直接退出
 		log.Fatal(err)
 	}
 
@@ -44,11 +45,13 @@ func NewServer(c RpcServerConf, register internal.RegisterFn) (*RpcServer, error
 	}
 
 	if c.HasEtcd() {
+		// 使用etcd作为服务注册和发现
 		server, err = internal.NewRpcPubServer(c.Etcd, c.ListenOn, serverOptions...)
 		if err != nil {
 			return nil, err
 		}
 	} else {
+		// 没有服务注册和发现
 		server = internal.NewRpcServer(c.ListenOn, serverOptions...)
 	}
 
@@ -61,6 +64,8 @@ func NewServer(c RpcServerConf, register internal.RegisterFn) (*RpcServer, error
 		server:   server,
 		register: register,
 	}
+
+	// 启动日志、普罗米修斯、链路追踪
 	if err = c.SetUp(); err != nil {
 		return nil, err
 	}
@@ -87,6 +92,7 @@ func (rs *RpcServer) AddUnaryInterceptors(interceptors ...grpc.UnaryServerInterc
 // Graceful shutdown is enabled by default.
 // Use proc.SetTimeToForceQuit to customize the graceful shutdown period.
 func (rs *RpcServer) Start() {
+	// 实际调用的是rpcServer or keepAliveServer的Start()方法
 	if err := rs.server.Start(rs.register); err != nil {
 		logx.Error(err)
 		panic(err)
@@ -115,6 +121,7 @@ func setupInterceptors(server internal.Server, c RpcServerConf, metrics *stat.Me
 	}
 
 	if c.Timeout > 0 {
+		// 添加请求超时拦截器
 		server.AddUnaryInterceptors(serverinterceptors.UnaryTimeoutInterceptor(
 			time.Duration(c.Timeout) * time.Millisecond))
 	}
@@ -125,6 +132,7 @@ func setupInterceptors(server internal.Server, c RpcServerConf, metrics *stat.Me
 			return err
 		}
 
+		// 权限验证拦截器
 		server.AddStreamInterceptors(serverinterceptors.StreamAuthorizeInterceptor(authenticator))
 		server.AddUnaryInterceptors(serverinterceptors.UnaryAuthorizeInterceptor(authenticator))
 	}

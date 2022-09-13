@@ -15,6 +15,7 @@ const timeFormat = "0102150405"
 
 var done = make(chan struct{})
 
+// 通过init函数监听信号
 func init() {
 	go func() {
 		var profiler Stopper
@@ -43,7 +44,7 @@ func init() {
 					close(done)
 				}
 
-				gracefulStop(signals)
+				gracefulStop(signals) //优雅重启
 			default:
 				logx.Error("Got unregistered signal:", v)
 			}

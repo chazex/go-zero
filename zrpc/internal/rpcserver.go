@@ -39,7 +39,8 @@ func NewRpcServer(address string, opts ...ServerOption) Server {
 		options.metrics = stat.NewMetrics(address)
 	}
 
-	return &rpcServer{
+	return &rpcServer{ // rpcServer有启动方法Start()
+		// baseRpcServer，是一些配置相关的内容，和启动无关
 		baseRpcServer: newBaseRpcServer(address, &options),
 	}
 }
@@ -86,11 +87,11 @@ func (s *rpcServer) Start(register RegisterFn) error {
 		if s.health != nil {
 			s.health.Shutdown()
 		}
-		server.GracefulStop()
+		server.GracefulStop() // grpc原生优雅关闭
 	})
-	defer waitForCalled()
+	defer waitForCalled() // 等待所有的listener都执行完成后退出
 
-	return server.Serve(lis)
+	return server.Serve(lis) // 在这里阻塞，接收请求并处理。在调用server.GracefulStop()时，函数返回
 }
 
 // WithMetrics returns a func that sets metrics to a Server.

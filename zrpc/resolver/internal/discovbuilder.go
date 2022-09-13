@@ -11,6 +11,7 @@ import (
 
 type discovBuilder struct{}
 
+// Build cc 是 ccResolverWrapper
 func (b *discovBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) (
 	resolver.Resolver, error) {
 	hosts := strings.FieldsFunc(targets.GetAuthority(target), func(r rune) bool {
@@ -35,6 +36,7 @@ func (b *discovBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ 
 		}
 	}
 	sub.AddListener(update)
+	// 初始化的时候，先执行一下update()，用来触发cc.UpdateState()
 	update()
 
 	return &nopResolver{cc: cc}, nil

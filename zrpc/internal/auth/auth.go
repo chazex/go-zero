@@ -15,7 +15,8 @@ const defaultExpiration = 5 * time.Minute
 
 // An Authenticator is used to authenticate the rpc requests.
 type Authenticator struct {
-	store  *redis.Redis
+	store *redis.Redis
+	// 存储在redis中的key, value是一个hash map
 	key    string
 	cache  *collection.Cache
 	strict bool
@@ -56,7 +57,9 @@ func (a *Authenticator) Authenticate(ctx context.Context) error {
 	return a.validate(app, token)
 }
 
+// 权限验证： 通过app，去redis中拿到token（内部设置缓存和singleflight），和用户上传到 token 做对比，符合则验证通过，否则验证失败。
 func (a *Authenticator) validate(app, token string) error {
+	// singleflight 获取
 	expect, err := a.cache.Take(app, func() (interface{}, error) {
 		return a.store.Hget(a.key, app)
 	})

@@ -45,6 +45,7 @@ func (manager *ResourceManager) Close() error {
 func (manager *ResourceManager) GetResource(key string, create func() (io.Closer, error)) (io.Closer, error) {
 	val, err := manager.singleFlight.Do(key, func() (interface{}, error) {
 		manager.lock.RLock()
+		// 单例：已经初始化过了，则直接返回
 		resource, ok := manager.resources[key]
 		manager.lock.RUnlock()
 		if ok {

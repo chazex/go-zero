@@ -27,6 +27,7 @@ type (
 
 	// A ServiceGroup is a group of services.
 	// Attention: the starting order of the added services is not guaranteed.
+	// 注意： 启动顺序无法保证，所以service之间应该是没有依赖的。
 	ServiceGroup struct {
 		services []Service
 		stopOnce func()
@@ -50,6 +51,7 @@ func (sg *ServiceGroup) Add(service Service) {
 // There should not be any logic code after calling this method, because this method is a blocking one.
 // Also, quitting this method will close the logx output.
 func (sg *ServiceGroup) Start() {
+	// 服务启动时，注册shutdown监听函数
 	proc.AddShutdownListener(func() {
 		log.Println("Shutting down...")
 		sg.stopOnce()
@@ -66,6 +68,7 @@ func (sg *ServiceGroup) Stop() {
 func (sg *ServiceGroup) doStart() {
 	routineGroup := threading.NewRoutineGroup()
 
+	// 对每一个service，都单独启动一个goroutine来运行它
 	for i := range sg.services {
 		service := sg.services[i]
 		routineGroup.RunSafe(func() {
@@ -73,9 +76,12 @@ func (sg *ServiceGroup) doStart() {
 		})
 	}
 
+	// 函数阻塞在这里,等待所有的service.Start()执行返回。
+	// 个人理解：service.Start() 运行应该是阻塞的，在service.Stop()执行的时候会促使service.Start()函数返回。
 	routineGroup.Wait()
 }
 
+// 调用每一个service的Stop()函数
 func (sg *ServiceGroup) doStop() {
 	for _, service := range sg.services {
 		service.Stop()

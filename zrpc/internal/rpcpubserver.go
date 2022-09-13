@@ -49,6 +49,7 @@ func (s keepAliveServer) Start(fn RegisterFn) error {
 	return s.Server.Start(fn)
 }
 
+// listenOn 指的是 xxx.yaml中的根节点 ListenOn
 func figureOutListenOn(listenOn string) string {
 	fields := strings.Split(listenOn, ":")
 	if len(fields) == 0 {
@@ -60,7 +61,7 @@ func figureOutListenOn(listenOn string) string {
 		return listenOn
 	}
 
-	ip := os.Getenv(envPodIp)
+	ip := os.Getenv(envPodIp) // POD_IP
 	if len(ip) == 0 {
 		ip = netx.InternalIp()
 	}
