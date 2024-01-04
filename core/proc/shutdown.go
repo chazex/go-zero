@@ -1,5 +1,4 @@
 //go:build linux || darwin
-// +build linux darwin
 
 package proc
 
@@ -44,11 +43,38 @@ func SetTimeToForceQuit(duration time.Duration) {
 	delayTimeBeforeForceQuit = duration
 }
 
-func gracefulStop(signals chan os.Signal) {
-	signal.Stop(signals) //停止channel signals接收信号
+//func gracefulStop(signals chan os.Signal) {
+//	signal.Stop(signals) //停止channel signals接收信号
+//
+//	logx.Info("Got signal SIGTERM, shutting down...")
+//	go wrapUpListeners.notifyListeners() // 异步执行注册的监听函数
+//
+//	time.Sleep(wrapUpTime)
+//	go shutdownListeners.notifyListeners() // 异步执行注册的监听函数
+//
+//	// 此时如果注册的监听函数正常执行完成，主goroutine应该已经退出
+//
+//	// 等待一段时间后，依然没有退出，则强制退出
+//	time.Sleep(delayTimeBeforeForceQuit - wrapUpTime)
+//	logx.Infof("Still alive after %v, going to force kill the process...", delayTimeBeforeForceQuit)
+//	syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+//}
 
-	logx.Info("Got signal SIGTERM, shutting down...")
-	go wrapUpListeners.notifyListeners() // 异步执行注册的监听函数
+// Shutdown calls the registered shutdown listeners, only for test purpose.
+func Shutdown() {
+	shutdownListeners.notifyListeners()
+}
+
+// WrapUp wraps up the process, only for test purpose.
+func WrapUp() {
+	wrapUpListeners.notifyListeners()
+}
+
+func gracefulStop(signals chan os.Signal, sig syscall.Signal) {
+	signal.Stop(signals)
+
+	logx.Infof("Got signal %d, shutting down...", sig)
+	go wrapUpListeners.notifyListeners()
 
 	time.Sleep(wrapUpTime)
 	go shutdownListeners.notifyListeners() // 异步执行注册的监听函数
@@ -58,7 +84,7 @@ func gracefulStop(signals chan os.Signal) {
 	// 等待一段时间后，依然没有退出，则强制退出
 	time.Sleep(delayTimeBeforeForceQuit - wrapUpTime)
 	logx.Infof("Still alive after %v, going to force kill the process...", delayTimeBeforeForceQuit)
-	syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	_ = syscall.Kill(syscall.Getpid(), sig)
 }
 
 type listenerManager struct {
@@ -91,4 +117,6 @@ func (lm *listenerManager) notifyListeners() {
 		group.RunSafe(listener)
 	}
 	group.Wait()
+
+	lm.listeners = nil
 }

@@ -42,8 +42,9 @@ func (manager *ResourceManager) Close() error {
 }
 
 // GetResource returns the resource associated with given key.
-func (manager *ResourceManager) GetResource(key string, create func() (io.Closer, error)) (io.Closer, error) {
-	val, err := manager.singleFlight.Do(key, func() (interface{}, error) {
+func (manager *ResourceManager) GetResource(key string, create func() (io.Closer, error)) (
+	io.Closer, error) {
+	val, err := manager.singleFlight.Do(key, func() (any, error) {
 		manager.lock.RLock()
 		// 单例：已经初始化过了，则直接返回
 		resource, ok := manager.resources[key]

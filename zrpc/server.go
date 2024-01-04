@@ -1,7 +1,6 @@
 package zrpc
 
 import (
-	"log"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/load"
@@ -22,11 +21,8 @@ type RpcServer struct {
 // MustNewServer returns a RpcSever, exits on any error.
 func MustNewServer(c RpcServerConf, register internal.RegisterFn) *RpcServer {
 	server, err := NewServer(c, register)
-	if err != nil {
-		// 出错程序直接退出
-		log.Fatal(err)
-	}
-
+	// 出错程序直接退出
+	logx.Must(err)
 	return server
 }
 
@@ -47,13 +43,13 @@ func NewServer(c RpcServerConf, register internal.RegisterFn) (*RpcServer, error
 
 	if c.HasEtcd() {
 		// 使用etcd作为服务注册和发现
-		server, err = internal.NewRpcPubServer(c.Etcd, c.ListenOn, serverOptions...)
+		server, err = internal.NewRpcPubServer(c.Etcd, c.ListenOn, c.Middlewares, serverOptions...)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// 没有服务注册和发现
-		server = internal.NewRpcServer(c.ListenOn, serverOptions...)
+		server = internal.NewRpcServer(c.ListenOn, c.Middlewares, serverOptions...)
 	}
 
 	server.SetName(c.Name)
@@ -66,7 +62,7 @@ func NewServer(c RpcServerConf, register internal.RegisterFn) (*RpcServer, error
 		register: register,
 	}
 
-	// 启动日志、Prometheus、链路追踪
+	// 启动日志、普罗米修斯、链路追踪
 	if err = c.SetUp(); err != nil {
 		return nil, err
 	}

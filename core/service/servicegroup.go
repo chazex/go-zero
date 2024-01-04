@@ -1,8 +1,7 @@
 package service
 
 import (
-	"log"
-
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/proc"
 	"github.com/zeromicro/go-zero/core/syncx"
 	"github.com/zeromicro/go-zero/core/threading"
@@ -53,7 +52,7 @@ func (sg *ServiceGroup) Add(service Service) {
 func (sg *ServiceGroup) Start() {
 	// 服务启动时，注册shutdown监听函数
 	proc.AddShutdownListener(func() {
-		log.Println("Shutting down...")
+		logx.Info("Shutting down services in group")
 		sg.stopOnce()
 	})
 
@@ -71,7 +70,7 @@ func (sg *ServiceGroup) doStart() {
 	// 对每一个service，都单独启动一个goroutine来运行它
 	for i := range sg.services {
 		service := sg.services[i]
-		routineGroup.RunSafe(func() {
+		routineGroup.Run(func() {
 			service.Start()
 		})
 	}

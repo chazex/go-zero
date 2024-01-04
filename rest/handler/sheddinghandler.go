@@ -43,7 +43,7 @@ func SheddingHandler(shedder load.Shedder, metrics *stat.Metrics) func(http.Hand
 				return
 			}
 
-			cw := &response.WithCodeResponseWriter{Writer: w}
+			cw := response.NewWithCodeResponseWriter(w)
 			// 最后回调执行结果
 			defer func() {
 				// 执行失败

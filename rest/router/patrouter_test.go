@@ -47,7 +47,7 @@ func TestPatRouterHandleErrors(t *testing.T) {
 		t.Run(test.method, func(t *testing.T) {
 			router := NewRouter()
 			err := router.Handle(test.method, test.path, nil)
-			assert.Error(t, ErrInvalidMethod, err)
+			assert.Equal(t, test.err, err)
 		})
 	}
 }
@@ -778,7 +778,7 @@ func TestParseWithMissingForm(t *testing.T) {
 
 			err = httpx.Parse(r, &v)
 			assert.NotNil(t, err)
-			assert.Equal(t, "field zipcode is not set", err.Error())
+			assert.Equal(t, `field "zipcode" is not set`, err.Error())
 		}))
 	assert.Nil(t, err)
 

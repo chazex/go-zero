@@ -1,6 +1,8 @@
 package discov
 
 import (
+	"time"
+
 	"github.com/zeromicro/go-zero/core/discov/internal"
 	"github.com/zeromicro/go-zero/core/lang"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -55,14 +57,7 @@ func NewPublisher(endpoints []string, key, value string, opts ...PubOption) *Pub
 
 // KeepAlive keeps key:value alive.
 func (p *Publisher) KeepAlive() error {
-	// 获取etcd实例：得到的cli是原生的etcd client
-	cli, err := internal.GetRegistry().GetConn(p.endpoints)
-	if err != nil {
-		return err
-	}
-
-	// 存储到etcd
-	p.lease, err = p.register(cli)
+	cli, err := p.doRegister()
 	if err != nil {
 		return err
 	}
@@ -93,6 +88,45 @@ func (p *Publisher) Stop() {
 	p.quit.Close()
 }
 
+func (p *Publisher) doKeepAlive() error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		select {
+		case <-p.quit.Done():
+			return nil
+		default:
+			cli, err := p.doRegister()
+			if err != nil {
+				logx.Errorf("etcd publisher doRegister: %s", err.Error())
+				break
+			}
+
+			if err := p.keepAliveAsync(cli); err != nil {
+				logx.Errorf("etcd publisher keepAliveAsync: %s", err.Error())
+				break
+			}
+
+			return nil
+		}
+	}
+
+	return nil
+}
+
+func (p *Publisher) doRegister() (internal.EtcdClient, error) {
+	// 获取etcd实例：得到的cli是原生的etcd client
+	cli, err := internal.GetRegistry().GetConn(p.endpoints)
+	if err != nil {
+		return nil, err
+	}
+
+	// 存储到etcd
+	p.lease, err = p.register(cli)
+	return cli, err
+}
+
 func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 	// cli是原生的etcd client.
 	// 保持租约
@@ -109,8 +143,8 @@ func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 					// channel关闭，此时一般是出错了。废弃lease，并重新初始化
 					p.revoke(cli)
 					// 重新初始化
-					if err := p.KeepAlive(); err != nil {
-						logx.Errorf("KeepAlive: %s", err.Error())
+					if err := p.doKeepAlive(); err != nil {
+						logx.Errorf("etcd publisher KeepAlive: %s", err.Error())
 					}
 					return
 				}
@@ -121,8 +155,8 @@ func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 				select {
 				case <-p.resumeChan:
 					// 接收到恢复指令：目前没找到那里会下发这个指令
-					if err := p.KeepAlive(); err != nil {
-						logx.Errorf("KeepAlive: %s", err.Error())
+					if err := p.doKeepAlive(); err != nil {
+						logx.Errorf("etcd publisher KeepAlive: %s", err.Error())
 					}
 					return
 				case <-p.quit.Done():
@@ -164,7 +198,7 @@ func (p *Publisher) register(client internal.EtcdClient) (clientv3.LeaseID, erro
 // 废弃lease
 func (p *Publisher) revoke(cli internal.EtcdClient) {
 	if _, err := cli.Revoke(cli.Ctx(), p.lease); err != nil {
-		logx.Error(err)
+		logx.Errorf("etcd publisher revoke: %s", err.Error())
 	}
 }
 

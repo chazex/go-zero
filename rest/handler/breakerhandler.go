@@ -29,7 +29,7 @@ func BreakerHandler(method, path string, metrics *stat.Metrics) func(http.Handle
 				return
 			}
 
-			cw := &response.WithCodeResponseWriter{Writer: w}
+			cw := response.NewWithCodeResponseWriter(w)
 			// 调用结束后，判断http_code, >=500 记失败，<500记录成功
 			defer func() {
 				if cw.Code < http.StatusInternalServerError {

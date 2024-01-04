@@ -11,14 +11,16 @@ type directBuilder struct{}
 
 func (d *directBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) (
 	resolver.Resolver, error) {
-	var addrs []resolver.Address
 	// 使用逗号拆分成多个
 	endpoints := strings.FieldsFunc(targets.GetEndpoints(target), func(r rune) bool {
 		return r == EndpointSepChar
 	})
+	endpoints = subset(endpoints, subsetSize)
+	addrs := make([]resolver.Address, 0, len(endpoints))
 
 	// 打乱所有连接，取前32个
-	for _, val := range subset(endpoints, subsetSize) {
+	//for _, val := range subset(endpoints, subsetSize) {
+	for _, val := range endpoints {
 		addrs = append(addrs, resolver.Address{
 			Addr: val,
 		})
