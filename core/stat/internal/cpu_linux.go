@@ -137,6 +137,7 @@ func systemCpuUsage() (uint64, error) {
 
 			var totalClockTicks uint64
 			for _, i := range fields[1:cpuFields] {
+				// parseUint就是将字符串转换为uint，内部处理有些错误
 				v, err := parseUint(i)
 				if err != nil {
 					return 0, err

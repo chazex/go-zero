@@ -46,6 +46,7 @@ func (b *p2cPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 		return base.NewErrPicker(balancer.ErrNoSubConnAvailable)
 	}
 
+	// 保存grpc所有可用连接
 	var conns []*subConn
 	for conn, connInfo := range readySCs {
 		conns = append(conns, &subConn{
@@ -94,7 +95,10 @@ func (p *p2cPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 		var node1, node2 *subConn
 		// 3次随机选择两个节点
 		for i := 0; i < pickTimes; i++ {
+			// 这块没看懂
+			// [0, n)
 			a := p.r.Intn(len(p.conns))
+			// [0, n-1)
 			b := p.r.Intn(len(p.conns) - 1)
 			if b >= a {
 				b++
@@ -113,6 +117,7 @@ func (p *p2cPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 
 	// 正在做的请求 + 1
 	atomic.AddInt64(&chosen.inflight, 1)
+	// 总请求数量+1
 	atomic.AddInt64(&chosen.requests, 1)
 
 	return balancer.PickResult{
@@ -121,15 +126,18 @@ func (p *p2cPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
 	}, nil
 }
 
+// 在原生grpc中，rpc调用完成之后，会调用这个函数返回的函数。
+
 func (p *p2cPicker) buildDoneFunc(c *subConn) func(info balancer.DoneInfo) {
 	start := int64(timex.Now())
 	return func(info balancer.DoneInfo) {
 		// 请求完成，对正在做的请求-1
 		atomic.AddInt64(&c.inflight, -1)
 		now := timex.Now()
-		// 保存本次请求结束时的时间点，并取出上次请求时的时间点
+		// 保存最新一次请求结束时的时间，并取出上次请求结束时的时间点
 		last := atomic.SwapInt64(&c.last, int64(now))
 
+		// td  最近两次请求结束时间的差值
 		td := int64(now) - last
 		if td < 0 {
 			td = 0
@@ -178,14 +186,15 @@ func (p *p2cPicker) choose(c1, c2 *subConn) *subConn {
 		return c1
 	}
 
-	// 比较两个节点的负载
+	// 比较两个节点的负载(最终赋值： c1 load 低)
 	if c1.load() > c2.load() {
 		c1, c2 = c2, c1
 	}
 
+	// 现在时c1的load低，但是如果c2连接，本次pick和上次pick之间超过了1秒钟,则强制使用c2连接 （为什么？，因为长时间没有使用，所以会导致load一直没法更新？）
 	pick := atomic.LoadInt64(&c2.pick)
+	// 原子操作： c2.pick == pick时，将c2.pick 设置为 start
 	if start-pick > forcePick && atomic.CompareAndSwapInt64(&c2.pick, pick, start) {
-		// 强制pick?
 		return c2
 	}
 
@@ -210,13 +219,15 @@ func (p *p2cPicker) logStats() {
 type subConn struct {
 	// ewma lag， 相当于平均耗时
 	lag uint64
-	// 正在处理的请求数
+	// 正在处理的请求数, 一个subConn可以同时处理多个请求
 	inflight int64
 	// ewma success, 用来判断此服务节点是否健康
-	success  uint64
+	success uint64
+	// 此conn，一共处理的请求次数
 	requests int64
-	// 最后一次请求处理完成时间
+	// 最近一次请求处理完成时间
 	last int64
+	// 最近一次做负载均衡时，被pick的时间
 	pick int64
 	addr resolver.Address
 	conn balancer.SubConn

@@ -11,6 +11,8 @@ import (
 	"github.com/zeromicro/go-zero/rest/internal/response"
 )
 
+// 用于http请求的Prometheus指标收集中间件。
+
 const serverNamespace = "http_server"
 
 var (

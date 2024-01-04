@@ -56,6 +56,7 @@ func NewPeriodicalExecutor(interval time.Duration, container TaskContainer) *Per
 			return timex.NewTicker(d)
 		},
 	}
+	// 增加Listener(在服务关闭时，执行）
 	proc.AddShutdownListener(func() {
 		executor.Flush()
 	})

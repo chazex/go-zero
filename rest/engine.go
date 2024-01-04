@@ -76,6 +76,8 @@ func (ng *engine) bindFeaturedRoutes(router httpx.Router, fr featuredRoutes, met
 	}
 
 	for _, route := range fr.routes {
+		// 每一个路由，都绑定了一堆中间件。
+		// 这样做的好处是，中间件可以做到基于路由维度的配置。比如不同的路由，有不同的超时时间，不同的熔断策略等等。
 		if err := ng.bindRoute(fr, router, metrics, route, verifier); err != nil {
 			return err
 		}
@@ -283,10 +285,12 @@ func (ng *engine) withTimeout() internal.StartOption {
 	return func(svr *http.Server) {
 		timeout := ng.conf.Timeout
 		if timeout > 0 {
+			// factor 0.8，避免clients发送的content-length比实际content长，如果没有这个timeout设置，server会超时响应503 Service Unavailable，触发熔断器
 			// factor 0.8, to avoid clients send longer content-length than the actual content,
 			// without this timeout setting, the server will time out and respond 503 Service Unavailable,
 			// which triggers the circuit breaker.
 			svr.ReadTimeout = 4 * time.Duration(timeout) * time.Millisecond / 5
+			// factor 0.9，为了避免没有这个超时设置的客户端无法读取响应，服务端会超时响应503 Service Unavailable，从而触发熔断器。
 			// factor 0.9, to avoid clients not reading the response
 			// without this timeout setting, the server will time out and respond 503 Service Unavailable,
 			// which triggers the circuit breaker.

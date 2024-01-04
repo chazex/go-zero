@@ -30,11 +30,17 @@ type (
 		// Name returns the name of the Breaker.
 		Name() string
 
+		//Allow 判断请求是否被接受（是否被熔断），如果被接受，则返回一个Promise接口实例，Promise的Accept()方法，可以对请求成功做计数，Reject()方法可以对失败做计数.
+		// 这种方法的使用场景为，先获取请求许可，并拿到Promise实例，然后执行业务逻辑，业务逻辑的成功和失败通过Promise对象的Accept和Reject方法来进行计数，从而实现了熔断的统计计算。
+
 		// Allow checks if the request is allowed.
 		// If allowed, a promise will be returned, the caller needs to call promise.Accept()
 		// on success, or call promise.Reject() on failure.
 		// If not allow, ErrServiceUnavailable will be returned.
 		Allow() (Promise, error)
+
+		// Do 也是获取请求许可执行业务逻辑，并依据业务逻辑结果做计数统计。 和Allow()的不一样的是，我们把业务逻辑通过回调方法的方式传过来。
+		// 这样业务逻辑的执行，以及依据业务逻辑结果做计数统计的整个一套的处理流程由框架来做。
 
 		// Do runs the given request if the Breaker accepts it.
 		// Do returns an error instantly if the Breaker rejects the request.
@@ -42,12 +48,16 @@ type (
 		// and causes the same panic again.
 		Do(req func() error) error
 
+		// 如果业务逻辑执行失败，返回error， 可以增加error回调函数，来判断哪些错误可以认为是可接受的，认为是成功。
+
 		// DoWithAcceptable runs the given request if the Breaker accepts it.
 		// DoWithAcceptable returns an error instantly if the Breaker rejects the request.
 		// If a panic occurs in the request, the Breaker handles it as an error
 		// and causes the same panic again.
 		// acceptable checks if it's a successful call, even if the err is not nil.
 		DoWithAcceptable(req func() error, acceptable Acceptable) error
+
+		// fallback被熔断器熔断时，调用的回调函数
 
 		// DoWithFallback runs the given request if the Breaker accepts it.
 		// DoWithFallback runs the fallback if the Breaker rejects the request.

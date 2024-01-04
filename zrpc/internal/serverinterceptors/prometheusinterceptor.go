@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// 用于rpc请求的Prometheus指标收集中间件。
+
 const serverNamespace = "rpc_server"
 
 var (
@@ -42,7 +44,9 @@ func UnaryPrometheusInterceptor(ctx context.Context, req interface{},
 
 	startTime := timex.Now()
 	resp, err := handler(ctx, req)
+	// 请求方法的耗时
 	metricServerReqDur.Observe(int64(timex.Since(startTime)/time.Millisecond), info.FullMethod)
+	// 请求方法的rpc状态码
 	metricServerReqCodeTotal.Inc(info.FullMethod, strconv.Itoa(int(status.Code(err))))
 	return resp, err
 }

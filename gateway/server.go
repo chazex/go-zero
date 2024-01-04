@@ -69,13 +69,16 @@ func (s *Server) build() error {
 		}
 	}, func(item interface{}, writer mr.Writer, cancel func(error)) {
 		up := item.(Upstream)
+		// 创建rpc client, 内部会做原生rpc dial
 		cli := zrpc.MustNewClient(up.Grpc)
+		// 请求grpc反射服务，或者基于proto文件
 		source, err := s.createDescriptorSource(cli, up)
 		if err != nil {
 			cancel(fmt.Errorf("%s: %w", up.Name, err))
 			return
 		}
 
+		// 依据grpc的服务和方法，转换为对应的http
 		methods, err := internal.GetMethods(source)
 		if err != nil {
 			cancel(fmt.Errorf("%s: %w", up.Name, err))
@@ -84,6 +87,7 @@ func (s *Server) build() error {
 
 		resolver := grpcurl.AnyResolverFromDescriptorSource(source)
 		for _, m := range methods {
+			// 对于在proto文件中配置了，http method 和path的grpc服务，构建http路由
 			if len(m.HttpMethod) > 0 && len(m.HttpPath) > 0 {
 				writer.Write(rest.Route{
 					Method:  m.HttpMethod,
@@ -93,10 +97,12 @@ func (s *Server) build() error {
 			}
 		}
 
+		// 下面这块代码的作用：　如果我们不想在proto文件中配置http的option，go-zero支持在配置文件中配置 http_method，http_path, grpc_path的映射关系
 		methodSet := make(map[string]struct{})
 		for _, m := range methods {
 			methodSet[m.RpcPath] = struct{}{}
 		}
+
 		for _, m := range up.Mappings {
 			if _, ok := methodSet[m.RpcPath]; !ok {
 				cancel(fmt.Errorf("%s: rpc method %s not found", up.Name, m.RpcPath))
@@ -112,26 +118,32 @@ func (s *Server) build() error {
 	}, func(pipe <-chan interface{}, cancel func(error)) {
 		for item := range pipe {
 			route := item.(rest.Route)
+			// 添加到http的路由中
 			s.Server.AddRoute(route)
 		}
 	})
 }
 
+// 构建http handler
 func (s *Server) buildHandler(source grpcurl.DescriptorSource, resolver jsonpb.AnyResolver,
 	cli zrpc.Client, rpcPath string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// 参数解析
 		parser, err := internal.NewRequestParser(r, resolver)
 		if err != nil {
 			httpx.Error(w, err)
 			return
 		}
 
+		// 这个timeout是配置文件中的 GatewayConf.Timeout
+		// 可以被 http request 的 Grpc-Timeout 所覆盖。
 		timeout := internal.GetTimeout(r.Header, s.timeout)
 		ctx, can := context.WithTimeout(r.Context(), timeout)
 		defer can()
 
 		w.Header().Set(httpx.ContentType, httpx.JsonContentType)
 		handler := internal.NewEventHandler(w, resolver)
+		// 通过grpcurl来调用grpc
 		if err := grpcurl.InvokeRPC(ctx, source, cli.Conn(), rpcPath, s.prepareMetadata(r.Header),
 			handler, parser.Next); err != nil {
 			httpx.Error(w, err)
@@ -154,7 +166,10 @@ func (s *Server) createDescriptorSource(cli zrpc.Client, up Upstream) (grpcurl.D
 			return nil, err
 		}
 	} else {
+		// 动态获取反射（访问grpc server的反射服务）
 		refCli := grpc_reflection_v1alpha.NewServerReflectionClient(cli.Conn())
+		// grpc原生也可以获取服务/方法列表，https://juejin.cn/s/golang%20grpc%20%E5%8F%8D%E5%B0%84
+		// 这里使用了grpcurl来做的（它内部又简介用了一个老外的库），本质还是通过grpc原生来做的。
 		client := grpcreflect.NewClient(context.Background(), refCli)
 		source = grpcurl.DescriptorSourceFromServer(context.Background(), client)
 	}

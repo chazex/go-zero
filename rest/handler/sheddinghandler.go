@@ -31,8 +31,10 @@ func SheddingHandler(shedder load.Shedder, metrics *stat.Metrics) func(http.Hand
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sheddingStat.IncrementTotal()
+			// 检查是否被降载
 			promise, err := shedder.Allow()
 			if err != nil {
+				// 降载，记录相关日志与指标
 				metrics.AddDrop()
 				sheddingStat.IncrementDrop()
 				logx.Errorf("[http] dropped, %s - %s - %s",
@@ -42,14 +44,18 @@ func SheddingHandler(shedder load.Shedder, metrics *stat.Metrics) func(http.Hand
 			}
 
 			cw := &response.WithCodeResponseWriter{Writer: w}
+			// 最后回调执行结果
 			defer func() {
+				// 执行失败
 				if cw.Code == http.StatusServiceUnavailable {
 					promise.Fail()
 				} else {
+					// 执行成功
 					sheddingStat.IncrementPass()
 					promise.Pass()
 				}
 			}()
+			// 执行业务方法
 			next.ServeHTTP(cw, r)
 		})
 	}

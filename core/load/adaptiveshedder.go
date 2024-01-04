@@ -40,17 +40,24 @@ var (
 )
 
 type (
+	// Promise 回调函数
 	// A Promise interface is returned by Shedder.Allow to let callers tell
 	// whether the processing request is successful or not.
 	Promise interface {
+		// Pass 请求成功时回调此函数
 		// Pass lets the caller tell that the call is successful.
 		Pass()
+		// Fail 请求失败时回调此函数
 		// Fail lets the caller tell that the call is failed.
 		Fail()
 	}
 
+	// Shedder 降载接口定义
 	// Shedder is the interface that wraps the Allow method.
 	Shedder interface {
+		// Allow 降载检查
+		// 1. 允许调用，需手动执行 Promise.accept()/reject()上报实际执行任务结果
+		// 2. 拒绝调用，将会直接返回err：服务过载错误 ErrServiceOverloaded
 		// Allow returns the Promise if allowed, otherwise ErrServiceOverloaded.
 		Allow() (Promise, error)
 	}

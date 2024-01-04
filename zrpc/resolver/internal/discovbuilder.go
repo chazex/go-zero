@@ -35,6 +35,7 @@ func (b *discovBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ 
 			logx.Error(err)
 		}
 	}
+	// 在container中，添加一个listener. 这样etcd变化的时候，就会执行update方法, update方法会通过UpdateState通知grpc-go连接发生了变化。
 	sub.AddListener(update)
 	// 初始化的时候，先执行一下update()，用来触发cc.UpdateState()
 	update()

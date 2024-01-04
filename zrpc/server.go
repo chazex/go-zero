@@ -38,6 +38,7 @@ func NewServer(c RpcServerConf, register internal.RegisterFn) (*RpcServer, error
 	}
 
 	var server internal.Server
+	// 耗时统计
 	metrics := stat.NewMetrics(c.ListenOn)
 	serverOptions := []internal.ServerOption{
 		internal.WithMetrics(metrics),
@@ -65,7 +66,7 @@ func NewServer(c RpcServerConf, register internal.RegisterFn) (*RpcServer, error
 		register: register,
 	}
 
-	// 启动日志、普罗米修斯、链路追踪
+	// 启动日志、Prometheus、链路追踪
 	if err = c.SetUp(); err != nil {
 		return nil, err
 	}
@@ -121,7 +122,7 @@ func setupInterceptors(server internal.Server, c RpcServerConf, metrics *stat.Me
 	}
 
 	if c.Timeout > 0 {
-		// 添加请求超时拦截器
+		// 添加grpc server端的超时拦截器
 		server.AddUnaryInterceptors(serverinterceptors.UnaryTimeoutInterceptor(
 			time.Duration(c.Timeout) * time.Millisecond))
 	}

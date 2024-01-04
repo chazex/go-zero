@@ -50,6 +50,8 @@ func (r *Registry) Monitor(endpoints []string, key string, l UpdateListener) err
 	if exists {
 		// 内存中的kv传递给监听器.
 		// 这里设计的目的是：防止etcd集群出现故障，这样内存中的数据依然可用，不会大规模的影响服务
+		// 23.4.19 这里我觉得更重要原因是：一个服务可能有很多个调用方，每一个调用方，都会使用服务发现的方式，来获取服务连接列表。 但是他们的key都是一个，所以这里通过这个缓存，可以快速的让客户端拿到连接。
+		// 话说，真的需要这么急吗？
 		kvs := c.getCurrent(key)
 		for _, kv := range kvs {
 			l.OnAdd(kv)
@@ -72,12 +74,18 @@ func (r *Registry) getCluster(endpoints []string) (c *cluster, exists bool) {
 	return
 }
 
+// cluster 代表对一个etcd集群的监听.Registry内部维护了etcd hosts 和cluster实例的关联关系。所以相同的etcd hosts只会建立一个cluster。
+// 内部维护了一个本地缓存，缓存的内容是监听的key和value的映射。（在服务发现这个场景下，就是服务在etcd的key前缀，以及服务的地址列表的映射）
+// 内部维护了key和监听者的映射关系，用于检测到key变更时，通知监听者。
 type cluster struct {
+	// etcd 各个节点的连接地址
 	endpoints []string
-	// endpoints 排序后，拼接成的字符串。目的是，标识一个etcd连接，用于单例初始化（在ResourceManager中）
+	// key  endpoints 切片排序后，使用","拼接成的字符串。用于标识一个etcd集群，用于单例初始化（在ResourceManager中）
 	key string
-	// {etcdhosts1: {key1: val1, key2: val2}, etcdhost2: {key11: val11, key22: val22}}
-	values     map[string]map[string]string
+	// 监听的key的值的本地缓存
+	// {keyprefix1: {key1: val1, key2: val2}, keyprefix2: {key11: val11, key22: val22}}
+	values map[string]map[string]string
+	// 被监听的key前缀和 监听者的映射关系
 	listeners  map[string][]UpdateListener
 	watchGroup *threading.RoutineGroup
 	done       chan lang.PlaceholderType
@@ -129,6 +137,8 @@ func (c *cluster) getCurrent(key string) []KV {
 }
 
 // 依据参数kvs，和缓存进行对比，将新增和删除事件，通知到各个监听器
+// key key前缀
+// kvs 是从etcd中通过 key前缀 拿到的值列表
 func (c *cluster) handleChanges(key string, kvs []KV) {
 	var add []KV
 	var remove []KV
@@ -261,6 +271,7 @@ func (c *cluster) load(cli EtcdClient, key string) int64 {
 	return resp.Header.Revision
 }
 
+// key 要监听的key前缀
 func (c *cluster) monitor(key string, l UpdateListener) error {
 	// 添加监听器
 	c.lock.Lock()

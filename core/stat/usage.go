@@ -30,6 +30,7 @@ func init() {
 		for {
 			select {
 			case <-cpuTicker.C:
+				// 定时启动协程，刷新cpu使用率
 				threading.RunSafe(func() {
 					curUsage := internal.RefreshCpu()
 					prevUsage := atomic.LoadInt64(&cpuUsage)
@@ -38,6 +39,7 @@ func init() {
 					atomic.StoreInt64(&cpuUsage, usage)
 				})
 			case <-allTicker.C:
+				// 定时打印日志， CPU 内存等
 				if logEnabled.True() {
 					printUsage()
 				}

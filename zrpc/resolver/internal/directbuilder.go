@@ -12,6 +12,7 @@ type directBuilder struct{}
 func (d *directBuilder) Build(target resolver.Target, cc resolver.ClientConn, _ resolver.BuildOptions) (
 	resolver.Resolver, error) {
 	var addrs []resolver.Address
+	// 使用逗号拆分成多个
 	endpoints := strings.FieldsFunc(targets.GetEndpoints(target), func(r rune) bool {
 		return r == EndpointSepChar
 	})

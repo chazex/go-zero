@@ -44,6 +44,7 @@ func (a *Authenticator) Authenticate(ctx context.Context) error {
 		return status.Error(codes.Unauthenticated, missingMetadata)
 	}
 
+	// 请求中没有携带权限信息
 	apps, tokens := md[appKey], md[tokenKey]
 	if len(apps) == 0 || len(tokens) == 0 {
 		return status.Error(codes.Unauthenticated, missingMetadata)
@@ -57,7 +58,7 @@ func (a *Authenticator) Authenticate(ctx context.Context) error {
 	return a.validate(app, token)
 }
 
-// 权限验证： 通过app，去redis中拿到token（内部设置缓存和singleflight），和用户上传到 token 做对比，符合则验证通过，否则验证失败。
+// 权限验证： 通过app，去cache中拿到token（cache分本地和redis，优先从本地拿，没有的话使用singleflight去redis中拿），和用户上传到 token 做对比，符合则验证通过，否则验证失败。
 func (a *Authenticator) validate(app, token string) error {
 	// singleflight 获取
 	expect, err := a.cache.Take(app, func() (interface{}, error) {

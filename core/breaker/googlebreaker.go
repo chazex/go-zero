@@ -35,15 +35,23 @@ func newGoogleBreaker() *googleBreaker {
 }
 
 func (b *googleBreaker) accept() error {
+	// accepts 是历史成功总数， total 是历史总数
 	accepts, total := b.history()
 	weightedAccepts := b.k * float64(accepts)
 	// https://landing.google.com/sre/sre-book/chapters/handling-overload/#eq2101
 	dropRatio := math.Max(0, (float64(total-protection)-weightedAccepts)/float64(total+1))
 	if dropRatio <= 0 {
+		// 通过
 		return nil
 	}
 
+	// 因为weightedAccepts>=0， 所以dropRatio 肯定是<1的。
+	// weightedAccepts越大，代表成功的数量越多, 此时dropRatio越小，反之亦然。
+	// dropRatio越小，则生成的随机数[0.0,1.0) < dropRatio的概率越低。
+	// 这么做的原因猜测： 因为当dropRatio > 0时，（如果按照total=100来算的话成功数量占 63.3（95/1.5）， 如果按照1000来算的话，成功的数量在663(995/1.5)），此时失败的数量已经达到一定的级别了。
+	// 就可以认为需要按照一定的几率来减轻服务器的压力。
 	if b.proba.TrueOnProba(dropRatio) {
+		// 生成的[0.0,1.0)的随机数 < dropRatio, 则返回错误
 		return ErrServiceUnavailable
 	}
 
@@ -52,6 +60,7 @@ func (b *googleBreaker) accept() error {
 
 func (b *googleBreaker) allow() (internalPromise, error) {
 	if err := b.accept(); err != nil {
+		// 被拒绝
 		return nil, err
 	}
 
@@ -62,6 +71,7 @@ func (b *googleBreaker) allow() (internalPromise, error) {
 
 func (b *googleBreaker) doReq(req func() error, fallback func(err error) error, acceptable Acceptable) error {
 	if err := b.accept(); err != nil {
+		// 被拒绝
 		if fallback != nil {
 			return fallback(err)
 		}
@@ -70,16 +80,21 @@ func (b *googleBreaker) doReq(req func() error, fallback func(err error) error, 
 	}
 
 	defer func() {
+		// 发生panic, 失败数量+1
 		if e := recover(); e != nil {
 			b.markFailure()
 			panic(e)
 		}
 	}()
 
+	// 执行实际请求函数
 	err := req()
 	if acceptable(err) {
+		// 实际执行：b.stat.Add(1)
+		// 也就是说：内部指标统计成功+1
 		b.markSuccess()
 	} else {
+		// 原理同上
 		b.markFailure()
 	}
 

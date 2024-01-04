@@ -42,6 +42,7 @@ type (
 	ClientOption func(options *ClientOptions)
 
 	client struct {
+		// 原生grpc连接
 		conn *grpc.ClientConn
 	}
 )
@@ -50,6 +51,7 @@ type (
 func NewClient(target string, opts ...ClientOption) (Client, error) {
 	var cli client
 
+	// 配置负载均衡器
 	svcCfg := fmt.Sprintf(`{"loadBalancingPolicy":"%s"}`, p2c.Name)
 	balancerOpt := WithDialOption(grpc.WithDefaultServiceConfig(svcCfg))
 	opts = append([]ClientOption{balancerOpt}, opts...)
@@ -85,6 +87,7 @@ func (c *client) buildDialOptions(opts ...ClientOption) []grpc.DialOption {
 			clientinterceptors.DurationInterceptor,
 			clientinterceptors.PrometheusInterceptor,
 			clientinterceptors.BreakerInterceptor,
+			// 超时拦截器
 			clientinterceptors.TimeoutInterceptor(cliOpts.Timeout),
 		),
 		WithStreamClientInterceptors(
@@ -99,6 +102,7 @@ func (c *client) dial(server string, opts ...ClientOption) error {
 	options := c.buildDialOptions(opts...)
 	timeCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
+	// 原生grpc创建连接
 	conn, err := grpc.DialContext(timeCtx, server, options...)
 	if err != nil {
 		service := server

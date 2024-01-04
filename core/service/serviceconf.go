@@ -50,6 +50,7 @@ func (sc ServiceConf) SetUp() error {
 	}
 
 	sc.initMode()
+	// prometheus 指标收集开启HTTP服务
 	prometheus.StartAgent(sc.Prometheus)
 
 	if len(sc.Telemetry.Name) == 0 {

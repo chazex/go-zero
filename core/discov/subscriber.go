@@ -34,6 +34,7 @@ func NewSubscriber(endpoints []string, key string, opts ...SubOption) (*Subscrib
 	}
 	sub.items = newContainer(sub.exclusive)
 
+	// endpoints 是etcd连接字符串，key是要监听的key前缀，sub.item是key前缀变更的监听者
 	if err := internal.GetRegistry().Monitor(endpoints, key, sub.items); err != nil {
 		return nil, err
 	}
@@ -77,7 +78,9 @@ func WithSubEtcdTLS(certFile, certKeyFile, caFile string, insecureSkipVerify boo
 
 type container struct {
 	exclusive bool
-	values    map[string][]string
+	// val -> key list 映射
+	values map[string][]string
+	// key -> val 映射
 	mapping   map[string]string
 	snapshot  atomic.Value
 	dirty     *syncx.AtomicBool
@@ -180,6 +183,7 @@ func (c *container) notifyChange() {
 	listeners := append(([]func())(nil), c.listeners...)
 	c.lock.Unlock()
 
+	// 一次调用监听者
 	for _, listener := range listeners {
 		listener()
 	}
