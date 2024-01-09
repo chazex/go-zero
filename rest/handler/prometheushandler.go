@@ -36,6 +36,7 @@ var (
 func PrometheusHandler(path, method string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// prometheus 统计每个请求耗时， 统计请求总量
 			startTime := timex.Now()
 			cw := response.NewWithCodeResponseWriter(w)
 			defer func() {

@@ -40,6 +40,7 @@ func (b *AtomicBool) Set(v bool) {
 	}
 }
 
+// 判断是否为true
 // True returns true if current value is true.
 func (b *AtomicBool) True() bool {
 	return atomic.LoadUint32((*uint32)(b)) == 1

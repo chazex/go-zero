@@ -34,16 +34,20 @@ func LimitContentSecurityHandler(limitBytes int64, decrypters map[string]codec.R
 			case http.MethodDelete, http.MethodGet, http.MethodPost, http.MethodPut:
 				header, err := security.ParseContentSecurity(decrypters, r)
 				if err != nil {
+					// 解析错误
 					logx.Errorf("Signature parse failed, X-Content-Security: %s, error: %s",
 						r.Header.Get(contentSecurity), err.Error())
 					executeCallbacks(w, r, next, strict, httpx.CodeSignatureInvalidHeader, callbacks)
 				} else if code := security.VerifySignature(r, header, tolerance); code != httpx.CodeSignaturePass {
+					// 解析成功，签名验证错误
 					logx.Errorf("Signature verification failed, X-Content-Security: %s",
 						r.Header.Get(contentSecurity))
 					executeCallbacks(w, r, next, strict, code, callbacks)
 				} else if r.ContentLength > 0 && header.Encrypted() {
+					// 解析成功，签名验证成功
 					LimitCryptionHandler(limitBytes, header.Key)(next).ServeHTTP(w, r)
 				} else {
+					// 解析成功，签名验证成功
 					next.ServeHTTP(w, r)
 				}
 			default:

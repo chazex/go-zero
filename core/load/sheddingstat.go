@@ -24,11 +24,16 @@ type (
 	}
 )
 
+//这个东西就是用在Schedding中间件，其他地方没用过
+
 // NewSheddingStat returns a SheddingStat.
 func NewSheddingStat(name string) *SheddingStat {
 	st := &SheddingStat{
 		name: name,
 	}
+	// 对外暴漏了统计total， pass， drop的接口，然后内部启动一个协程
+	// 协程启动一个1分钟的ticker，每1分钟重置pass, drop,t total， 并打印cpu使用率， total, pass, drop的值
+	// 这里的就是单纯的1分钟统计依次，并没有做滑动时间窗口
 	go st.run()
 	return st
 }
@@ -50,6 +55,7 @@ func (s *SheddingStat) IncrementDrop() {
 
 func (s *SheddingStat) loop(c <-chan time.Time) {
 	for range c {
+		// pass, drop,t total 均置为0
 		st := s.reset()
 
 		if !logEnabled.True() {

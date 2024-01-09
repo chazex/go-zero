@@ -33,7 +33,8 @@ type (
 
 	// comboHealthManager folds given probes into one, reflects their statuses in a thread-safe way.
 	comboHealthManager struct {
-		mu     sync.Mutex
+		mu sync.Mutex
+		// 探针管理器内部管理的探针列表
 		probes []Probe
 	}
 )
@@ -47,8 +48,10 @@ func AddProbe(probe Probe) {
 func CreateHttpHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if defaultHealthManager.IsReady() {
+			// 就绪时返回“OK”， 只有所有的探针都时就绪态时，才算Ready
 			_, _ = w.Write([]byte("OK"))
 		} else {
+			// 否则输出详细信息，表明哪个探针未就绪，哪个探针就绪
 			http.Error(w, "Service Unavailable\n"+defaultHealthManager.verboseInfo(),
 				http.StatusServiceUnavailable)
 		}
@@ -120,6 +123,7 @@ func (p *comboHealthManager) IsReady() bool {
 	return true
 }
 
+// 输出一个字符串,看看哪些探针就绪了,哪些探针没就绪
 func (p *comboHealthManager) verboseInfo() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

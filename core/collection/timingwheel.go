@@ -144,6 +144,7 @@ func (tw *TimingWheel) SetTimer(key, value any, delay time.Duration) error {
 	}
 
 	select {
+	// 添加任务
 	case tw.setChannel <- timingEntry{
 		baseEntry: baseEntry{
 			delay: delay,
@@ -153,6 +154,7 @@ func (tw *TimingWheel) SetTimer(key, value any, delay time.Duration) error {
 	}:
 		return nil
 	case <-tw.stopChannel:
+		// 已关闭
 		return ErrClosed
 	}
 }
@@ -247,8 +249,10 @@ func (tw *TimingWheel) run() {
 	for {
 		select {
 		case <-tw.ticker.Chan():
+			// 时间轮到了，需要执行某个时间轮下的任务
 			tw.onTick()
 		case task := <-tw.setChannel:
+			// 任务处理
 			tw.setTask(&task)
 		case key := <-tw.removeChannel:
 			tw.removeTask(key)
@@ -271,6 +275,7 @@ func (tw *TimingWheel) runTasks(tasks []timingTask) {
 	go func() {
 		for i := range tasks {
 			threading.RunSafe(func() {
+				// 运行执行器
 				tw.execute(tasks[i].key, tasks[i].value)
 			})
 		}
@@ -278,6 +283,7 @@ func (tw *TimingWheel) runTasks(tasks []timingTask) {
 }
 
 func (tw *TimingWheel) scanAndRunTasks(l *list.List) {
+	// 获取需要处理的任务
 	var tasks []timingTask
 
 	for e := l.Front(); e != nil; {
@@ -314,11 +320,13 @@ func (tw *TimingWheel) scanAndRunTasks(l *list.List) {
 		e = next
 	}
 
+	// 异步并行执行任务
 	tw.runTasks(tasks)
 }
 
 func (tw *TimingWheel) setTask(task *timingEntry) {
 	if task.delay < tw.interval {
+		// 任务的延迟时间，不能小于时间轮的转动最小单位
 		task.delay = tw.interval
 	}
 
@@ -327,6 +335,7 @@ func (tw *TimingWheel) setTask(task *timingEntry) {
 		entry.item.value = task.value
 		tw.moveTask(task.baseEntry)
 	} else {
+		// 获取我在时间轮中的位置
 		pos, circle := tw.getPositionAndCircle(task.delay)
 		task.circle = circle
 		tw.slots[pos].PushBack(task)

@@ -25,7 +25,8 @@ const topCpuUsage = 1000
 var ErrSignatureConfig = errors.New("bad config for Signature")
 
 type engine struct {
-	conf   RestConf
+	conf RestConf
+	//  将grpc所对应的http路由添加到了这里。 代码模板的路由也添加到这里。
 	routes []featuredRoutes
 	// timeout is the max timeout of all routes
 	timeout              time.Duration
@@ -80,6 +81,7 @@ func (ng *engine) appendAuthHandler(fr featuredRoutes, chn chain.Chain,
 }
 
 func (ng *engine) bindFeaturedRoutes(router httpx.Router, fr featuredRoutes, metrics *stat.Metrics) error {
+	// 调用 signatureVerifier 方法，根据 fr.signature 的值创建一个签名验证器
 	verifier, err := ng.signatureVerifier(fr.signature)
 	if err != nil {
 		return err
@@ -100,9 +102,11 @@ func (ng *engine) bindRoute(fr featuredRoutes, router httpx.Router, metrics *sta
 	route Route, verifier func(chain.Chain) chain.Chain) error {
 	chn := ng.chain
 	if chn == nil {
+		// 如果为空, 调用 buildChainWithNativeMiddlewares()根据 fr, route, metrics 构建一个 chain 对象
 		chn = ng.buildChainWithNativeMiddlewares(fr, route, metrics)
 	}
 
+	// 添加权限中间件
 	chn = ng.appendAuthHandler(fr, chn, verifier)
 
 	for _, middleware := range ng.middlewares {
@@ -110,12 +114,15 @@ func (ng *engine) bindRoute(fr featuredRoutes, router httpx.Router, metrics *sta
 	}
 	handle := chn.ThenFunc(route.Handler)
 
+	// 添加到路由中（这里的router，就是server.router，实际类型是patRouter，实现了httpx.Router）
 	return router.Handle(route.Method, route.Path, handle)
 }
 
 func (ng *engine) bindRoutes(router httpx.Router) error {
+	// 配置指标统计： (%s) - qps: %.1f/s, drops: %d, avg time: %.1fms, med: %.1fms, " 90th: %.1fms, 99th: %.1fms, 99.9th: %.1fms"
 	metrics := ng.createMetrics()
 
+	// 为特性路由（grpc 转换成的 http路由）添加中间件？
 	for _, fr := range ng.routes {
 		if err := ng.bindFeaturedRoutes(router, fr, metrics); err != nil {
 			return err
@@ -187,6 +194,7 @@ func (ng *engine) checkedTimeout(timeout time.Duration) time.Duration {
 func (ng *engine) createMetrics() *stat.Metrics {
 	var metrics *stat.Metrics
 
+	// 配置指标统计： (%s) - qps: %.1f/s, drops: %d, avg time: %.1fms, med: %.1fms, " 90th: %.1fms, 99th: %.1fms, 99.9th: %.1fms"
 	if len(ng.conf.Name) > 0 {
 		metrics = stat.NewMetrics(ng.conf.Name)
 	} else {
@@ -309,13 +317,17 @@ func (ng *engine) start(router httpx.Router, opts ...StartOption) error {
 		return err
 	}
 
+	// 将 ng.withTimeout 方法作为一个 StartOption 参数添加到 opts 切片的开头
 	// make sure user defined options overwrite default options
 	opts = append([]StartOption{ng.withTimeout()}, opts...)
 
+	// 如果配置文件中没有证书文件和密钥文件，则调用 internal 包中的 StartHttp 方法，启动一个 http 服务
 	if len(ng.conf.CertFile) == 0 && len(ng.conf.KeyFile) == 0 {
+		// 真实启动HTTP服务
 		return internal.StartHttp(ng.conf.Host, ng.conf.Port, router, opts...)
 	}
 
+	// // 如果配置文件中有证书文件和密钥文件，则创建一个匿名函数，将 ng 的 tlsConfig 属性赋值给 svr 的 TLSConfig 属性，然后将这个匿名函数作为一个 StartOption 参数添加到 opts 切片的末尾
 	// make sure user defined options overwrite default options
 	opts = append([]StartOption{
 		func(svr *http.Server) {
@@ -325,6 +337,7 @@ func (ng *engine) start(router httpx.Router, opts ...StartOption) error {
 		},
 	}, opts...)
 
+	// 调用 internal 包中的 StartHttps 方法，启动一个 https 服务
 	return internal.StartHttps(ng.conf.Host, ng.conf.Port, ng.conf.CertFile,
 		ng.conf.KeyFile, router, opts...)
 }

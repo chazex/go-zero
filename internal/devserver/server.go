@@ -42,6 +42,10 @@ func (s *Server) addRoutes() {
 
 	// metrics
 	if s.config.EnableMetrics {
+		// 在go-zero\zrpc\internal\serverinterceptors\prometheusinterceptor.go中,通过常量的方式进行的prometheus的声明和注册
+		// 然后在interceptor中使用UnaryPrometheusInterceptor来做的拦截器并统计指标。
+
+		// 这里为什么要打开全局开关呢？
 		// enable prometheus global switch
 		prometheus.Enable()
 		s.handleFunc(s.config.MetricsPath, promhttp.Handler().ServeHTTP)
@@ -63,6 +67,7 @@ func (s *Server) handleFunc(pattern string, handler http.HandlerFunc) {
 
 // StartAsync start inner http server background.
 func (s *Server) StartAsync() {
+	// 添加Prometheus，pprof， metrics 路由
 	s.addRoutes()
 	threading.GoSafe(func() {
 		addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)

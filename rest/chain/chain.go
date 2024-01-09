@@ -83,6 +83,7 @@ func (c chain) Then(h http.Handler) http.Handler {
 		h = http.DefaultServeMux
 	}
 
+	// 将middleware array 变成 洋葱芯模型
 	for i := range c.middlewares {
 		h = c.middlewares[len(c.middlewares)-1-i](h)
 	}
@@ -108,6 +109,7 @@ func (c chain) ThenFunc(fn http.HandlerFunc) http.Handler {
 	return c.Then(fn)
 }
 
+// 合并middlewares
 func join(a, b []Middleware) []Middleware {
 	mids := make([]Middleware, 0, len(a)+len(b))
 	mids = append(mids, a...)

@@ -30,7 +30,7 @@ type (
 		// Name returns the name of the Breaker.
 		Name() string
 
-		//Allow 判断请求是否被接受（是否被熔断），如果被接受，则返回一个Promise接口实例，Promise的Accept()方法，可以对请求成功做计数，Reject()方法可以对失败做计数.
+		//Allow 判断请求是否被接受（是否被熔断），如果被接受，则返回一个Promise接口实例，Promise的Accept()方法，可以对请求成功做计数，Reject()方法可以对失败做计数， 成功和失败的计数用于后续的熔断判断.
 		// 这种方法的使用场景为，先获取请求许可，并拿到Promise实例，然后执行业务逻辑，业务逻辑的成功和失败通过Promise对象的Accept和Reject方法来进行计数，从而实现了熔断的统计计算。
 
 		// Allow checks if the request is allowed.

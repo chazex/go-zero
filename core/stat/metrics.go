@@ -44,6 +44,8 @@ type (
 	}
 )
 
+// 如果不想日志输出指标信息，则调用此函数，关闭即可。
+
 // DisableLog disables logs of stats.
 func DisableLog() {
 	logEnabled.Set(false)

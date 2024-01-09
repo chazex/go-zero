@@ -45,6 +45,7 @@ func MustNewServer(c RestConf, opts ...RunOption) *Server {
 // NewServer returns a server with given config of c and options defined in opts.
 // Be aware that later RunOption might overwrite previous one that write the same option.
 func NewServer(c RestConf, opts ...RunOption) (*Server, error) {
+	// 启动非核心业务的一些东西：　包括log， 链路追踪， devserver（metrics， pprof， probe） 等。
 	if err := c.SetUp(); err != nil {
 		return nil, err
 	}
@@ -199,6 +200,7 @@ func WithMaxBytes(maxBytes int64) RouteOption {
 	}
 }
 
+// WithMiddlewares 为每一个路由添加中间件
 // WithMiddlewares adds given middlewares to given routes.
 func WithMiddlewares(ms []Middleware, rs ...Route) []Route {
 	for i := len(ms) - 1; i >= 0; i-- {

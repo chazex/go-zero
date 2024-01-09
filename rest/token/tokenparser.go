@@ -44,10 +44,14 @@ func (tp *TokenParser) ParseToken(r *http.Request, secret, prevSecret string) (*
 	var token *jwt.Token
 	var err error
 
+	// 可以选择设置两把密钥，secret， prevSecret， 两个密钥各自记录密钥解析成功的数量。 优先使用成功多的来解，解不开使用另外一个解。
+	// 不太理解目的干什么。
+
 	if len(prevSecret) > 0 {
 		count := tp.loadCount(secret)
 		prevCount := tp.loadCount(prevSecret)
 
+		// first 代表多的，  second 代表少的
 		var first, second string
 		if count > prevCount {
 			first = secret

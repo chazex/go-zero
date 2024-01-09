@@ -32,9 +32,10 @@ const (
 func TimeoutHandler(duration time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if duration <= 0 {
+			// 不做包装，直接返回原函数
 			return next
 		}
-
+		// 处理请求超时时，直接给客户端返回。
 		return &timeoutHandler{
 			handler: next,
 			dt:      duration,
@@ -64,7 +65,9 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancelCtx := context.WithTimeout(r.Context(), h.dt)
 	defer cancelCtx()
 
+	// 使用 timeout context 覆盖原来的context
 	r = r.WithContext(ctx)
+	// 业务正常处理完成信号
 	done := make(chan struct{})
 	tw := &timeoutWriter{
 		w:    w,
@@ -86,6 +89,7 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p := <-panicChan:
 		panic(p)
 	case <-done:
+		// 业务正常处理完成（未超时）
 		tw.mu.Lock()
 		defer tw.mu.Unlock()
 		dst := w.Header()
@@ -100,12 +104,15 @@ func (h *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Write(tw.wbuf.Bytes())
 	case <-ctx.Done():
+		// 业务处理超时
 		tw.mu.Lock()
 		defer tw.mu.Unlock()
 		// there isn't any user-defined middleware before TimoutHandler,
 		// so we can guarantee that cancelation in biz related code won't come here.
 		httpx.ErrorCtx(r.Context(), w, ctx.Err(), func(w http.ResponseWriter, err error) {
 			if errors.Is(err, context.Canceled) {
+				// 499状态码来表示客户端在服务器响应之前关闭了连接，这通常发生在客户端发起请求后，但在服务器完成响应之前中断连接。
+				// HTTP状态码499通常指示客户端关闭连接，而服务器在尚未完成其响应时收到了连接关闭的请求。这个状态码在HTTP标准中并没有明确的定义，它更多地是由一些Web服务器或代理服务器特定地使用。
 				w.WriteHeader(statusClientClosedRequest)
 			} else {
 				w.WriteHeader(http.StatusServiceUnavailable)

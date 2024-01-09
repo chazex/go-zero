@@ -41,6 +41,8 @@ type (
 	AuthorizeOption func(opts *AuthorizeOptions)
 )
 
+// secret 是jwt密钥
+
 // Authorize returns an authorization middleware.
 func Authorize(secret string, opts ...AuthorizeOption) func(http.Handler) http.Handler {
 	var authOpts AuthorizeOptions
@@ -67,6 +69,9 @@ func Authorize(secret string, opts ...AuthorizeOption) func(http.Handler) http.H
 				unauthorized(w, r, errNoClaims, authOpts.Callback)
 				return
 			}
+			// 横线上方的返回，都是jwt认证失败
+			// ====================================
+			// 横线下方，是jwt认证成功
 
 			ctx := r.Context()
 			for k, v := range claims {
@@ -74,10 +79,12 @@ func Authorize(secret string, opts ...AuthorizeOption) func(http.Handler) http.H
 				case jwtAudience, jwtExpire, jwtId, jwtIssueAt, jwtIssuer, jwtNotBefore, jwtSubject:
 					// ignore the standard claims
 				default:
+					// 将jwt里面的业务信息添加到context里面
 					ctx = context.WithValue(ctx, k, v)
 				}
 			}
 
+			// r.WithContext(ctx) 可以更新ctx吗？
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

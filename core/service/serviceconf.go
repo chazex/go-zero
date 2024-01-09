@@ -55,7 +55,7 @@ func (sc ServiceConf) SetUp() error {
 	}
 
 	sc.initMode()
-	// prometheus 指标收集开启HTTP服务
+	// prometheus 指标收集开启HTTP服务（这块废弃了）
 	prometheus.StartAgent(sc.Prometheus)
 
 	if len(sc.Telemetry.Name) == 0 {
@@ -69,6 +69,8 @@ func (sc ServiceConf) SetUp() error {
 	if len(sc.MetricsUrl) > 0 {
 		stat.SetReportWriter(stat.NewRemoteWriter(sc.MetricsUrl))
 	}
+	// 启动探针服务、Prometheus服务, pprof服务
+	// 将上面说的几种服务，统一用一个叫devserver的HTTP服务对外暴漏（因为都不属于业务核心，又没有必要每个都单独开一个http服务）
 	devserver.StartAgent(sc.DevServer)
 
 	return nil

@@ -28,7 +28,7 @@ var (
 // AddShutdownListener adds fn as a shutdown listener.
 // The returned func can be used to wait for fn getting called.
 func AddShutdownListener(fn func()) (waitForCalled func()) {
-	// 添加监听函数，返回值也是一个函数，waitForCalled()，调用此函数会阻塞，直到列表里面所有的监听hd
+	// 添加监听函数，返回值也是一个函数，waitForCalled()，调用此函数会阻塞，直到列表里面所有的监听函数都执行完成，waitForCalled才会返回（内部就是sync.WaitGroup)。
 	return shutdownListeners.addListener(fn)
 }
 
@@ -60,24 +60,27 @@ func SetTimeToForceQuit(duration time.Duration) {
 //	syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 //}
 
+// Shutdown 这个函数仅仅是为了测试用， 线上走的是一个异步的
 // Shutdown calls the registered shutdown listeners, only for test purpose.
 func Shutdown() {
 	shutdownListeners.notifyListeners()
 }
 
+// WrapUp 这个函数仅仅是为了测试用， 线上走的是一个异步的
 // WrapUp wraps up the process, only for test purpose.
 func WrapUp() {
 	wrapUpListeners.notifyListeners()
 }
 
 func gracefulStop(signals chan os.Signal, sig syscall.Signal) {
+	//停止channel signals接收信号
 	signal.Stop(signals)
 
 	logx.Infof("Got signal %d, shutting down...", sig)
 	go wrapUpListeners.notifyListeners()
 
 	time.Sleep(wrapUpTime)
-	go shutdownListeners.notifyListeners() // 异步执行注册的监听函数
+	go shutdownListeners.notifyListeners() // 异步执行注册的监听函数(做通知操作)
 
 	// 此时如果注册的监听函数正常执行完成，主goroutine应该已经退出
 

@@ -47,6 +47,7 @@ func MustNewServer(c GatewayConf, opts ...Option) *Server {
 // Start starts the gateway server.
 func (s *Server) Start() {
 	logx.Must(s.build())
+	// 启动http服务
 	s.Server.Start()
 }
 
@@ -139,16 +140,16 @@ func (s *Server) buildHandler(source grpcurl.DescriptorSource, resolver jsonpb.A
 		// 通过grpcurl来调用grpc
 		if err := grpcurl.InvokeRPC(r.Context(), source, cli.Conn(), rpcPath, s.prepareMetadata(r.Header),
 
-		// 这个timeout是配置文件中的 GatewayConf.Timeout
-		// 可以被 http request 的 Grpc-Timeout 所覆盖。
-		//timeout := internal.GetTimeout(r.Header, s.timeout)
-		//ctx, can := context.WithTimeout(r.Context(), timeout)
-		//defer can()
-		//
-		//w.Header().Set(httpx.ContentType, httpx.JsonContentType)
-		//handler := internal.NewEventHandler(w, resolver)
-		//
-		//if err := grpcurl.InvokeRPC(ctx, source, cli.Conn(), rpcPath, s.prepareMetadata(r.Header),
+			// 这个timeout是配置文件中的 GatewayConf.Timeout
+			// 可以被 http request 的 Grpc-Timeout 所覆盖。
+			//timeout := internal.GetTimeout(r.Header, s.timeout)
+			//ctx, can := context.WithTimeout(r.Context(), timeout)
+			//defer can()
+			//
+			//w.Header().Set(httpx.ContentType, httpx.JsonContentType)
+			//handler := internal.NewEventHandler(w, resolver)
+			//
+			//if err := grpcurl.InvokeRPC(ctx, source, cli.Conn(), rpcPath, s.prepareMetadata(r.Header),
 			handler, parser.Next); err != nil {
 			httpx.ErrorCtx(r.Context(), w, err)
 		}

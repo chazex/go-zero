@@ -31,11 +31,12 @@ func init() {
 			case syscall.SIGUSR1:
 				dumpGoroutines(fileCreator{})
 			case syscall.SIGUSR2:
+				// 这里是做啥，我记得不是可以开启pprof的http服务吗
 				profiler := StartProfile()
 				time.AfterFunc(profileDuration, profiler.Stop)
 			case syscall.SIGTERM:
 				stopOnSignal()
-				gracefulStop(signals, syscall.SIGTERM) //优雅重启
+				gracefulStop(signals, syscall.SIGTERM) //优雅停机
 			case syscall.SIGINT:
 				stopOnSignal()
 				gracefulStop(signals, syscall.SIGINT)

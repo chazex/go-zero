@@ -72,15 +72,21 @@ type (
 	}
 
 	adaptiveShedder struct {
-		cpuThreshold    int64
-		windows         int64
-		flying          int64
-		avgFlying       float64
-		avgFlyingLock   syncx.SpinLock
-		overloadTime    *syncx.AtomicDuration
+		cpuThreshold int64
+		windows      int64
+		// 正在处理中的请求数量
+		flying int64
+		// 处理中请求的滑动平均值（滞后于flying）
+		avgFlying     float64
+		avgFlyingLock syncx.SpinLock
+		// 记录的是cpu最近一次判断过载的时间
+		overloadTime *syncx.AtomicDuration
+		// 用于标识上一次的请求是否被drop(用于快速判断是否为冷却期： 如果上一次的请求没有drop， 则标识已经过了冷却期。 如果上一次请求被drop则还要做具体判断)
 		droppedRecently *syncx.AtomicBool
-		passCounter     *collection.RollingWindow
-		rtCounter       *collection.RollingWindow
+		// 请求通过 （滑动窗口，可以防止毛刺）
+		passCounter *collection.RollingWindow
+		// 请求消耗的时间 （滑动窗口，可以防止毛刺）
+		rtCounter *collection.RollingWindow
 	}
 )
 
@@ -125,11 +131,13 @@ func NewAdaptiveShedder(opts ...ShedderOption) Shedder {
 // Allow implements Shedder.Allow.
 func (as *adaptiveShedder) Allow() (Promise, error) {
 	if as.shouldDrop() {
+		// 请求应该被丢弃
 		as.droppedRecently.Set(true)
 
 		return nil, ErrServiceOverloaded
 	}
 
+	// 正在处理的请求数量+1
 	as.addFlying(1)
 
 	return &promise{
@@ -139,19 +147,35 @@ func (as *adaptiveShedder) Allow() (Promise, error) {
 }
 
 func (as *adaptiveShedder) addFlying(delta int64) {
+	// 增加delta，并返回修改后的值， 即flying是目前正在处理中的请求值
 	flying := atomic.AddInt64(&as.flying, delta)
 	// update avgFlying when the request is finished.
 	// this strategy makes avgFlying have a little bit lag against flying, and smoother.
 	// when the flying requests increase rapidly, avgFlying increase slower, accept more requests.
 	// when the flying requests drop rapidly, avgFlying drop slower, accept less requests.
 	// it makes the service to serve as more requests as possible.
+	// 请求结束时， 更新aveFlying
+	// avgFlying策略，相对于flying具有一点点滞后性，avgFlying更平滑
+	// 当 flying的数量快速增加， avgFlying缓慢增加时，可以接受更多的请求
+	// 当 flying的数量快速下降时，avgFlying也缓慢下降时，可以接受较少的请求
+	// 目的是为了让服务尽可能的处理更多的请求。
+
+	// 这块的原理大概是这样：　当我们的服务负载一直比较平稳时，突然来了一个高峰, 请求量激增，但是这个高峰很短暂，它在flying上面体现很明显，但此时在avgFlying还并没有体现出来，或者后续也不一定体现的出来。
+	// 这个短暂的高峰，我们认为服务可以吃下这波流量。 所以此时并不急于拒绝请求。 因为这波短暂的高峰过后，又恢复如常。
+	// 应对下降也是同样的道理，如果服务一直处于高负载，突然来了一个低谷（请求量骤降),但是这个低谷很短暂， 它在flying上面体现很明显，但此时在avgFlying还并没有体现出来，或者后续也不一定体现的出来。
+	// 这个短暂的低谷，我们不能认为服务的压力就降低了（后面还有大量的请求）。 所以此时应该接受较少的请求。 因为这波短暂的低谷过后，还有可能是大量的高峰期。
+
+	// 所以后面在判断是否为高吞吐时，只有avgFlying和flying都很高时，才会认为是高吞吐
+	// 这里有个疑问，对于avgFlying很高，但是flying很少时，不也应该是高吞吐吗，此时应该拒掉请求吧？
 	if delta < 0 {
 		as.avgFlyingLock.Lock()
+		// 平均值占比90%， 其他占10%
 		as.avgFlying = as.avgFlying*flyingBeta + float64(flying)*(1-flyingBeta)
 		as.avgFlyingLock.Unlock()
 	}
 }
 
+// 如果平均正在请求数 > 最大允许正在请求数 && 当前正在处理的请求数 > 最大允许正在请求数, 则认为服务压力比较大，返回true
 func (as *adaptiveShedder) highThru() bool {
 	as.avgFlyingLock.Lock()
 	avgFlying := as.avgFlying
@@ -198,6 +222,7 @@ func (as *adaptiveShedder) minRt() float64 {
 }
 
 func (as *adaptiveShedder) shouldDrop() bool {
+	// （cpu达到阈值，或者 在冷却期间） && 高吞吐  => 过载保护
 	if as.systemOverloaded() || as.stillHot() {
 		if as.highThru() {
 			flying := atomic.LoadInt64(&as.flying)
@@ -226,6 +251,7 @@ func (as *adaptiveShedder) stillHot() bool {
 		return false
 	}
 
+	// 距离上次cpu被判断为过载的时间，小于1s， 我们仍然认为是过载
 	if timex.Since(overloadTime) < coolOffDuration {
 		return true
 	}
@@ -234,11 +260,13 @@ func (as *adaptiveShedder) stillHot() bool {
 	return false
 }
 
+// 判断服务是否过载：　判断cpu使用率是否高于我们设置的值（as.cpuThreshold）
 func (as *adaptiveShedder) systemOverloaded() bool {
 	if !systemOverloadChecker(as.cpuThreshold) {
 		return false
 	}
 
+	// 留存一下cpu过载的时间
 	as.overloadTime.Set(timex.Now())
 	return true
 }
@@ -274,6 +302,7 @@ func (p *promise) Fail() {
 }
 
 func (p *promise) Pass() {
+	// 计算本次请求 消耗时间， 单位毫秒
 	rt := float64(timex.Since(p.start)) / float64(time.Millisecond)
 	p.shedder.addFlying(-1)
 	p.shedder.rtCounter.Add(math.Ceil(rt))
