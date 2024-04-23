@@ -70,6 +70,7 @@ func (pr *patRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	allows, ok := pr.methodsAllowed(r.Method, reqPath)
 	if !ok {
+		// 路由找不到
 		pr.handleNotFound(w, r)
 		return
 	}

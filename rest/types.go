@@ -15,7 +15,7 @@ type (
 		Method string
 		//请求路径，可以包含模式匹配的参数，比如/user/:id
 		Path string
-		//处理请求的函数,用于处理匹配到该路由的请求，并返回响应
+		//请求的处理函数,用于处理匹配到该路由的请求，并返回响应
 		Handler http.HandlerFunc
 	}
 

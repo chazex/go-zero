@@ -112,9 +112,10 @@ func (ng *engine) bindRoute(fr featuredRoutes, router httpx.Router, metrics *sta
 	for _, middleware := range ng.middlewares {
 		chn = chn.Append(convertMiddleware(middleware))
 	}
+	// 构建出洋葱芯
 	handle := chn.ThenFunc(route.Handler)
 
-	// 添加到路由中（这里的router，就是server.router，实际类型是patRouter，实现了httpx.Router）
+	// 根据Method， Path， Handler挂载到路由树上（这里的router，就是server.router，实际类型是patRouter，实现了httpx.Router， 这个router是最终）
 	return router.Handle(route.Method, route.Path, handle)
 }
 
