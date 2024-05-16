@@ -76,6 +76,15 @@ type (
 	// Option defines the method to customize a Breaker.
 	Option func(breaker *circuitBreaker)
 
+	//=====================================================================================
+	// 本文件中，作者用了很多的封装思想。某一功能，会出现两类接口。 Xxx和internalXxx, 比如Promise 和 internalPromise, 以及 throttle 和 internalThrottle
+	// internalXXX类型的接口，它的实现和实际功能相关，在本源码中，是和熔断相关的，具体来讲就是googlePromise 和 googleBreaker
+	// XXX 类型的接口的实现， 它是对internalXXX接口实现的封装， 内部实际上调用的是还是internalXXX接口的实现，它在外围做了一些记录日志，统计，记录额外信息的功能。
+	// XXX 类型的接口 是对外暴漏给用户使用的， internalXXX类型的接口，是在内部使用的。
+
+	// 目前Promise接口，只有一个有效的实现，就是promiseWithReason， 它是对internalPromise的封装。promiseWithReason会在外围做一些记录近几次的reject原因。 对于Accept和Reject调用的其实是
+	// internalPromise的实现， googlePromise
+
 	// Promise interface defines the callbacks that returned by Breaker.Allow.
 	Promise interface {
 		// Accept tells the Breaker that the call is successful.
@@ -99,6 +108,8 @@ type (
 		doReq(req func() error, fallback func(err error) error, acceptable Acceptable) error
 	}
 
+	// throttle 是对interface internalThrottle的封装，internalThrottle是实际的熔断逻辑， throttle 会在外围做一些统计、日志相关的工作。
+	// throttle 的实现是loggedThrottle， 从名字也能看出来，是记录日志的。  internalThrottle的实现是googleBreaker， 所以它才是真正的熔断逻辑。
 	throttle interface {
 		allow() (Promise, error)
 		doReq(req func() error, fallback func(err error) error, acceptable Acceptable) error
@@ -112,6 +123,7 @@ func NewBreaker(opts ...Option) Breaker {
 	for _, opt := range opts {
 		opt(&b)
 	}
+	// 可以通过参数Option指定名字，如果没指定，则随机生成字符串
 	if len(b.name) == 0 {
 		b.name = stringx.Rand()
 	}
@@ -156,6 +168,8 @@ func defaultAcceptable(err error) bool {
 	return err == nil
 }
 
+// loggedThrottle 是对interface throttle的实现，他内部实际上调用的是internalThrottle。
+// internalThrottle 接口是实际处理熔断判断的逻辑。 loggedThrottle 在外层做了一些统计，日志的工作。
 type loggedThrottle struct {
 	name string
 	internalThrottle
@@ -189,6 +203,7 @@ func (lt loggedThrottle) doReq(req func() error, fallback func(err error) error,
 }
 
 func (lt loggedThrottle) logError(err error) error {
+	// 如果错误是由熔断引起的，则日志记录熔断相关的信息。
 	if errors.Is(err, ErrServiceUnavailable) {
 		// if circuit open, not possible to have empty error window
 		stat.Report(fmt.Sprintf(
@@ -201,19 +216,22 @@ func (lt loggedThrottle) logError(err error) error {
 
 type errorWindow struct {
 	reasons [numHistoryReasons]string
-	index   int
-	count   int
-	lock    sync.Mutex
+	// index  window 的下一个可写的索引
+	index int
+	count int
+	lock  sync.Mutex
 }
 
 func (ew *errorWindow) add(reason string) {
 	ew.lock.Lock()
 	ew.reasons[ew.index] = fmt.Sprintf("%s %s", time.Now().Format(timeFormat), reason)
 	ew.index = (ew.index + 1) % numHistoryReasons
+	// 这里貌似执行一段时间后，就一直都是 numHistoryReasons 了。
 	ew.count = mathx.MinInt(ew.count+1, numHistoryReasons)
 	ew.lock.Unlock()
 }
 
+// String 逆序拼接所有原因，形成字符串
 func (ew *errorWindow) String() string {
 	var reasons []string
 
@@ -227,6 +245,8 @@ func (ew *errorWindow) String() string {
 	return strings.Join(reasons, "\n")
 }
 
+// Promise interface的实现， 同时也是对internalPromise的封装。
+// 内部逻辑实际上调用的是internalPromise，promiseWithReason在外围记录了Reject的近几次的原因。
 type promiseWithReason struct {
 	promise internalPromise
 	errWin  *errorWindow
@@ -237,6 +257,7 @@ func (p promiseWithReason) Accept() {
 }
 
 func (p promiseWithReason) Reject(reason string) {
+	// 记录近几次的错误
 	p.errWin.add(reason)
 	p.promise.Reject()
 }

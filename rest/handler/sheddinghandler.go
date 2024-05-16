@@ -38,7 +38,7 @@ func SheddingHandler(shedder load.Shedder, metrics *stat.Metrics) func(http.Hand
 			// 检查是否被降载
 			promise, err := shedder.Allow()
 			if err != nil {
-				// 降载，记录相关日志与指标
+				// err!=nil, 执行降载，记录相关日志与指标
 				metrics.AddDrop()
 				sheddingStat.IncrementDrop()
 				logx.Errorf("[http] dropped, %s - %s - %s",

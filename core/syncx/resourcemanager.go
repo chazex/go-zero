@@ -7,6 +7,8 @@ import (
 	"github.com/zeromicro/go-zero/core/errorx"
 )
 
+// 管理可以被关闭的资源池。资源以key:resource的方式保存在map中。
+
 // A ResourceManager is a manager that used to manage resources.
 type ResourceManager struct {
 	resources    map[string]io.Closer
@@ -29,6 +31,7 @@ func (manager *ResourceManager) Close() error {
 	defer manager.lock.Unlock()
 
 	var be errorx.BatchError
+	// 依次关闭所有资源
 	for _, resource := range manager.resources {
 		if err := resource.Close(); err != nil {
 			be.Add(err)

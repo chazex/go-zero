@@ -115,7 +115,9 @@ type Bucket struct {
 }
 
 func (b *Bucket) add(v float64) {
+	// 如果失败时，可以使用v为0
 	b.Sum += v
+	// 每次都加1
 	b.Count++
 }
 
@@ -124,7 +126,7 @@ func (b *Bucket) reset() {
 	b.Count = 0
 }
 
-// window对象，仅仅是一堆桶的集合，可以按照桶的编号对桶做一些操作，如清空桶，对桶里面的统计数据+1，做聚合等。
+// window对象，仅仅是一堆桶的集合，每个桶有一个编号，可以按照桶的编号对桶做一些操作，如清空桶，对桶里面的统计数据+1，做聚合等。
 // 它本身并不做窗口滑动的操作。
 
 type window struct {
@@ -144,7 +146,7 @@ func newWindow(size int) *window {
 }
 
 func (w *window) add(offset int, v float64) {
-	// 往执行的 bucket 加入指定的指标
+	// 往指定的 bucket 加入指定的指标
 	w.buckets[offset%w.size].add(v)
 }
 

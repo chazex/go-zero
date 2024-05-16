@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+// 根据给定reader，每次读取一行。 它这个封装主要是实现了一个调用方法
+/*
+	while s.Scan() {
+		line := s.Line()
+	}
+*/
+
 // A TextLineScanner is a scanner that can scan lines from given reader.
 type TextLineScanner struct {
 	reader  *bufio.Reader
@@ -28,6 +35,7 @@ func (scanner *TextLineScanner) Scan() bool {
 		return false
 	}
 
+	// 读取一行： ReadString函数，是一直读，直到读到给定符号为止。
 	line, err := scanner.reader.ReadString('\n')
 	scanner.line = strings.TrimRight(line, "\n")
 	if err == io.EOF {

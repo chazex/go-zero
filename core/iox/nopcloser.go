@@ -2,6 +2,8 @@ package iox
 
 import "io"
 
+// 一个不需要关闭的Write？
+
 type nopCloser struct {
 	io.Writer
 }

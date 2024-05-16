@@ -117,7 +117,8 @@ func NewAdaptiveShedder(opts ...ShedderOption) Shedder {
 	}
 	bucketDuration := options.window / time.Duration(options.buckets)
 	return &adaptiveShedder{
-		cpuThreshold:    options.cpuThreshold,
+		cpuThreshold: options.cpuThreshold,
+		// 把时间窗口又缩减到1s中内，得出桶的数量，这是干什么
 		windows:         int64(time.Second / bucketDuration),
 		overloadTime:    syncx.NewAtomicDuration(),
 		droppedRecently: syncx.NewAtomicBool(),
@@ -189,9 +190,13 @@ func (as *adaptiveShedder) maxFlight() int64 {
 	// maxQPS = maxPASS * windows
 	// minRT = min average response time in milliseconds
 	// maxQPS * minRT / milliseconds_per_second
+	// 含义是，桶内最大的qps * 1s内的窗口的桶的数量， 得到整个窗口中，1s内的qps的极值， 再乘以最小平均延迟，得到xxx
+	// 再除以1e3(1e3=1000)，转换成秒
+	//
 	return int64(math.Max(1, float64(as.maxPass()*as.windows)*(as.minRt()/1e3)))
 }
 
+// 获取滑动窗口的所有桶中，数量最大的桶， 即请求通过数量最大的桶
 func (as *adaptiveShedder) maxPass() int64 {
 	var result float64 = 1
 
@@ -204,6 +209,7 @@ func (as *adaptiveShedder) maxPass() int64 {
 	return int64(result)
 }
 
+// 获取滑动窗口的所有桶中，请求平均时间最小的值
 func (as *adaptiveShedder) minRt() float64 {
 	result := defaultMinRt
 
@@ -211,7 +217,9 @@ func (as *adaptiveShedder) minRt() float64 {
 		if b.Count <= 0 {
 			return
 		}
-
+		// b.Sum 表示一个桶内，所有请求消耗的总的时间，单位毫秒
+		// b.Count 表示一个桶内，请求的总数量
+		// 相处得到的avg，表示得到的平均时间
 		avg := math.Round(b.Sum / float64(b.Count))
 		if avg < result {
 			result = avg
@@ -222,7 +230,7 @@ func (as *adaptiveShedder) minRt() float64 {
 }
 
 func (as *adaptiveShedder) shouldDrop() bool {
-	// （cpu达到阈值，或者 在冷却期间） && 高吞吐  => 过载保护
+	// （cpu此刻过载，或者 在冷却期间） && 高吞吐  => 过载保护
 	if as.systemOverloaded() || as.stillHot() {
 		if as.highThru() {
 			flying := atomic.LoadInt64(&as.flying)
@@ -234,28 +242,34 @@ func (as *adaptiveShedder) shouldDrop() bool {
 				stat.CpuUsage(), as.maxPass(), as.minRt(), as.stillHot(), flying, avgFlying)
 			logx.Error(msg)
 			stat.Report(msg)
+			// 丢弃请求
 			return true
 		}
 	}
 
+	// （此刻未过载 && 过了冷却期） ||
+	//	（（此刻过载 || 冷却期中 ） && !highThru）
+	//	此时处理请求
 	return false
 }
 
 func (as *adaptiveShedder) stillHot() bool {
 	if !as.droppedRecently.True() {
+		// 上一个请求没有被丢弃， 则表示已经冷却了
 		return false
 	}
 
 	overloadTime := as.overloadTime.Load()
 	if overloadTime == 0 {
+		// 上次过载的时间为0， 则表示已经冷却了
 		return false
 	}
 
-	// 距离上次cpu被判断为过载的时间，小于1s， 我们仍然认为是过载
 	if timex.Since(overloadTime) < coolOffDuration {
+		// 距离上次cpu被判断为过载的时间，小于1s， 我们仍然认为是过载
 		return true
 	}
-
+	// 距离上次cpu被判断为过载的时间，超过1s， 认为已冷却
 	as.droppedRecently.Set(false)
 	return false
 }
@@ -292,19 +306,28 @@ func WithWindow(window time.Duration) ShedderOption {
 	}
 }
 
+// 业务侧（比如中间件）先调用Shedder.Allow()方法，判断是否要降载
+//
+//		如果被降载，则会返回错误。
+//
+//	 如果被通过，则会返回promise， 然后业务会继续向下执行，当执行成功，或者执行失败，则需要调用promise.Fail()或者promise.Pass()来做记录。
 type promise struct {
 	start   time.Duration
 	shedder *adaptiveShedder
 }
 
 func (p *promise) Fail() {
+	// 当业务执行失败后，未做特殊处理，仅仅是把当前正在处理的请求数-1
 	p.shedder.addFlying(-1)
 }
 
 func (p *promise) Pass() {
 	// 计算本次请求 消耗时间， 单位毫秒
 	rt := float64(timex.Since(p.start)) / float64(time.Millisecond)
+	// 当前正在处理的请求数-1
 	p.shedder.addFlying(-1)
+	// 滑动窗口记录，本次请求消耗时间
 	p.shedder.rtCounter.Add(math.Ceil(rt))
+	// 滑动窗口记录，请求成功的数量
 	p.shedder.passCounter.Add(1)
 }
