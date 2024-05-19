@@ -18,6 +18,11 @@ import (
 	"google.golang.org/grpc/resolver"
 )
 
+// https://go-zero.dev/docs/tutorials/service/governance/lb
+// P2C算法是一种改进的随机算法，它可以避免最劣选择和负载不均衡的情况。
+//P2C算法的核心思想是：从所有可用节点中随机选择两个节点，然后根据这两个节点的负载情况选择一个负载较小的节点。
+//这样做的好处在于，如果只随机选择一个节点，可能会选择到负载较高的节点，从而导致负载不均衡；而选择两个节点，则可以进行比较，从而避免最劣选择。
+
 const (
 	// Name is the name of p2c balancer.
 	Name = "p2c_ewma"
@@ -95,7 +100,9 @@ func (p *p2cPicker) Pick(_ balancer.PickInfo) (balancer.PickResult, error) {
 		var node1, node2 *subConn
 		// 3次随机选择两个节点
 		for i := 0; i < pickTimes; i++ {
-			// 这块没看懂
+			// 这块没看懂: 现在懂了，b选择在[0,n-1)范围内选取随机值，是因为后面要做b++，为了不超过限制，所以必须是在[0,n-1)内选取
+			// 这里我们再看，为什么要在b >= a时, b++, 首先比较好理解的时，当b==a时，表示两次选取的节点一样，这不符合逻辑，所以让b后移一位，让他们有差异。
+			// 当b > a 时，为什么要+1呢，因为b是从[0,n-1)内选取的，所以它永远选不到n，所以我们后移一位，让它可以选择到n。
 			// [0, n)
 			a := p.r.Intn(len(p.conns))
 			// [0, n-1)
@@ -143,8 +150,9 @@ func (p *p2cPicker) buildDoneFunc(c *subConn) func(info balancer.DoneInfo) {
 			td = 0
 		}
 		// // 用牛顿冷却定律中的衰减函数模型计算EWMA算法中的β值，这里叫w
-		// (1/e)**n： 1/e的n次方，n为两个RPC完成时间包含了几个衰变期
-		// 如果服务不繁忙，那么两次请求的时间就会很长，那么n就会变大，n越大，w值越小。 w表示加权下降的速率，w值越小，加权下降的越快(代表上一次的值的加权越小)
+		// math.Exp(x float)函数返回e**x, 即返回e的x次方的值。
+		// 由于计算的是-td, 所以计算的是 (1/e) 的 td/decayTime次方的值。 (1/e)**n： 1/e的n次方，n为最近的两个RPC完成时间包含了几个衰变期
+		// 如果服务不繁忙，那么两次请求的时间就会很长，td变大，那么n就会变大，n越大，w值越小。 w表示加权下降的速率，w值越小，加权下降的越快(代表上一次的值的加权越小)
 		w := math.Exp(float64(-td) / float64(decayTime))
 		// 计算本次请求延迟，并保存 （从pick 到 RPC请求完成）
 		lag := int64(now) - start
@@ -191,9 +199,10 @@ func (p *p2cPicker) choose(c1, c2 *subConn) *subConn {
 		c1, c2 = c2, c1
 	}
 
-	// 现在时c1的load低，但是如果c2连接，本次pick和上次pick之间超过了1秒钟,则强制使用c2连接 （为什么？，因为长时间没有使用，所以会导致load一直没法更新？）
+	// 现在c1变量存储的是的load低的连接，c2变量存储的是的load高的连接。
+	// 但是如果c2连接，本次pick和上次pick之间超过了1秒钟,则强制使用c2连接 （为什么？，因为长时间没有使用，所以会导致load一直没法更新？）
 	pick := atomic.LoadInt64(&c2.pick)
-	// 原子操作： c2.pick == pick时，将c2.pick 设置为 start
+	// 原子操作： c2.pick == pick时，将c2.pick 设置为 start （CompareAndSwapInt64函数的功能为，比较c2.pick和pick，如果是，将c2.pick更新为start）
 	if start-pick > forcePick && atomic.CompareAndSwapInt64(&c2.pick, pick, start) {
 		return c2
 	}

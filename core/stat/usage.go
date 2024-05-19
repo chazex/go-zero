@@ -34,6 +34,7 @@ func init() {
 				threading.RunSafe(func() {
 					curUsage := internal.RefreshCpu()
 					prevUsage := atomic.LoadInt64(&cpuUsage)
+					// cput-1指的是t-1时刻的cpu使用率， cput指的是t时刻的cpu使用率。 这里的beta值为0，95，则表示老的cpu使用率占比95%， 新的cpu使用率占比5%，这是为什么呢？
 					// cpu = cpuᵗ⁻¹ * beta + cpuᵗ * (1 - beta)
 					usage := int64(float64(prevUsage)*beta + float64(curUsage)*(1-beta))
 					atomic.StoreInt64(&cpuUsage, usage)

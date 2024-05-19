@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	cgroupDir   = "/sys/fs/cgroup"
+	cgroupDir = "/sys/fs/cgroup"
+	// cgroup v2 的cpu读取位置
 	cpuStatFile = cgroupDir + "/cpu.stat"
 	cpusetFile  = cgroupDir + "/cpuset.cpus.effective"
 )
@@ -32,6 +33,7 @@ var (
 type cgroup interface {
 	cpuQuotaUs() (int64, error)
 	cpuPeriodUs() (uint64, error)
+	// 获取cpu的核数
 	cpus() ([]uint64, error)
 	usageAllCpus() (uint64, error)
 }
@@ -57,6 +59,7 @@ func (c *cgroupV1) cpuQuotaUs() (int64, error) {
 	return strconv.ParseInt(data, 10, 64)
 }
 
+// cgroup v1 查看文件 /sys/fs/cgroup/cpu/cpu.cfs_period_us
 func (c *cgroupV1) cpuPeriodUs() (uint64, error) {
 	data, err := iox.ReadText(path.Join(c.cgroups["cpu"], "cpu.cfs_period_us"))
 	if err != nil {
@@ -178,6 +181,8 @@ func currentCgroupV2() (cgroup, error) {
 	}, nil
 }
 
+// 判断是否为cgroup v2: 判断方法为， /sys/fs/cgroup 状态
+
 // isCgroup2UnifiedMode returns whether we are running in cgroup v2 unified mode.
 func isCgroup2UnifiedMode() bool {
 	isUnifiedOnce.Do(func() {
@@ -219,6 +224,7 @@ func parseUints(val string) ([]uint64, error) {
 		return nil, nil
 	}
 
+	// 0-5,8-13,16-17,20-45,48-53,56-57,59-79
 	var sets []uint64
 	ints := make(map[uint64]lang.PlaceholderType)
 	cols := strings.Split(val, ",")
@@ -264,7 +270,7 @@ func parseUints(val string) ([]uint64, error) {
 // runningInUserNS detects whether we are currently running in a user namespace.
 func runningInUserNS() bool {
 	nsOnce.Do(func() {
-		file, err := os.Open("/proc/self/uid_map")
+		file, err := os.Open("c")
 		if err != nil {
 			// This kernel-provided file only exists if user namespaces are supported
 			return

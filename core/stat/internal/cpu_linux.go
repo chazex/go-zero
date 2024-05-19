@@ -26,14 +26,19 @@ var (
 
 // if /proc not present, ignore the cpu calculation, like wsl linux
 func initialize() {
+	// 获取cpu核数
 	cpus, err := cpuSets()
 	if err != nil {
 		logx.Error(err)
 		return
 	}
 
+	// cpu核数
 	cores = uint64(len(cpus))
+	// cpu配额
 	quota = float64(len(cpus))
+	// 如果为-1，则表示为没有限制，此时cores = quota
+	// 如果不为-1， 则需要重新计算，limit，
 	cq, err := cpuQuota()
 	if err == nil {
 		if cq != -1 {
@@ -50,6 +55,8 @@ func initialize() {
 		}
 	}
 
+	// 因为计算cpu使用率，是计算一段时间内的，所以需要用 （当前值 - 老值）， 这里初始化的时候，为了不让老值为0， 所以需要先算一下，用来作为老值。
+	// 这里算出来的值是 瞬时的。
 	preSystem, err = systemCpuUsage()
 	if err != nil {
 		logx.Error(err)
@@ -81,6 +88,7 @@ func RefreshCpu() uint64 {
 	cpuDelta := total - preTotal
 	systemDelta := system - preSystem
 	if cpuDelta > 0 && systemDelta > 0 {
+		// 1e3是科学计数法， 值位1000
 		usage = uint64(float64(cpuDelta*cores*1e3) / (float64(systemDelta) * quota))
 	}
 	preSystem = system
@@ -89,6 +97,7 @@ func RefreshCpu() uint64 {
 	return usage
 }
 
+// cgruop v1 查找文件 cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us -1 表示没限制
 func cpuQuota() (int64, error) {
 	cg, err := currentCgroup()
 	if err != nil {
@@ -98,6 +107,7 @@ func cpuQuota() (int64, error) {
 	return cg.cpuQuotaUs()
 }
 
+// cgroup v1 查看文件  cat /sys/fs/cgroup/cpu/cpu.cfs_period_us
 func cpuPeriod() (uint64, error) {
 	cg, err := currentCgroup()
 	if err != nil {
@@ -117,13 +127,17 @@ func cpuSets() ([]uint64, error) {
 }
 
 func systemCpuUsage() (uint64, error) {
+	// 读取 /proc/stat 文件的内容，并去除空行
 	lines, err := iox.ReadTextLines("/proc/stat", iox.WithoutBlank())
 	if err != nil {
 		return 0, err
 	}
 
+	// 遍历每一行
 	for _, line := range lines {
+		// 以空格为分隔符将行拆分成字段
 		fields := strings.Fields(line)
+		// 找到以 "cpu" 开头的行
 		if fields[0] == "cpu" {
 			if len(fields) < cpuFields {
 				return 0, fmt.Errorf("bad format of cpu stats")
@@ -137,6 +151,7 @@ func systemCpuUsage() (uint64, error) {
 					return 0, err
 				}
 
+				// 计算总的时钟周期数
 				totalClockTicks += v
 			}
 
