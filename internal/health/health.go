@@ -13,7 +13,7 @@ import (
 var defaultHealthManager = newComboHealthManager()
 
 type (
-	// Probe represents readiness status of given component.
+	// Probe represents readiness status of a given component.
 	Probe interface {
 		// MarkReady sets a ready state for the endpoint handlers.
 		MarkReady()
@@ -45,11 +45,11 @@ func AddProbe(probe Probe) {
 }
 
 // CreateHttpHandler create health http handler base on given probe.
-func CreateHttpHandler() http.HandlerFunc {
+func CreateHttpHandler(healthResponse string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if defaultHealthManager.IsReady() {
-			// 就绪时返回“OK”， 只有所有的探针都时就绪态时，才算Ready
-			_, _ = w.Write([]byte("OK"))
+			// 就绪时返回设定的成功字符串(如“OK”)， 只有所有的探针都时就绪态时，才算Ready
+			_, _ = w.Write([]byte(healthResponse))
 		} else {
 			// 否则输出详细信息，表明哪个探针未就绪，哪个探针就绪
 			http.Error(w, "Service Unavailable\n"+defaultHealthManager.verboseInfo(),

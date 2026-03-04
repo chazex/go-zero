@@ -147,8 +147,8 @@ func (c *Cache) Take(key string, fetch func() (any, error)) (any, error) {
 	// 表示是从本地直接拿到了，还是从远程拿到的。
 	var fresh bool
 	val, err := c.barrier.Do(key, func() (any, error) {
-		// because O(1) on map search in memory, and fetch is an IO query
-		// so we do double check, cache might be taken by another call
+		// because O(1) on map search in memory, and fetch is an IO query,
+		// so we do double-check, cache might be taken by another call
 		if val, ok := c.doGet(key); ok {
 			return val, nil
 		}

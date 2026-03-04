@@ -2,6 +2,7 @@ package internal
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -17,8 +18,8 @@ import (
 )
 
 const (
-	cgroupDir = "/sys/fs/cgroup"
-	// cgroup v2 的cpu读取位置
+	cgroupDir   = "/sys/fs/cgroup"
+	cpuMaxFile  = cgroupDir + "/cpu.max"
 	cpuStatFile = cgroupDir + "/cpu.stat"
 	cpusetFile  = cgroupDir + "/cpuset.cpus.effective"
 )
@@ -31,11 +32,14 @@ var (
 )
 
 type cgroup interface {
-	cpuQuotaUs() (int64, error)
-	cpuPeriodUs() (uint64, error)
-	// 获取cpu的核数
-	cpus() ([]uint64, error)
-	usageAllCpus() (uint64, error)
+	cpuQuota() (float64, error)
+	// cpu 使用率
+	// cgroup v1 通过文件/sys/fs/cgroup/cpuacct/cpuacct.usage获取， 含义： 读取这个文件的结果是累积的 CPU 时间，即自 cgroup 创建和启动以来，该 cgroup 中所有任务的总 CPU 使用时间。
+	cpuUsage() (uint64, error)
+	// cpu数量
+	// cgroup v1 通过文件/sys/fs/cgroup/cpuset/cpuset.cpus获取
+	// cgroup v2 通过文件/sys/fs/cgroup/cpuset.cpus.effective获取
+	effectiveCpus() (int, error)
 }
 
 func currentCgroup() (cgroup, error) {
@@ -50,13 +54,22 @@ type cgroupV1 struct {
 	cgroups map[string]string
 }
 
-func (c *cgroupV1) cpuQuotaUs() (int64, error) {
-	data, err := iox.ReadText(path.Join(c.cgroups["cpu"], "cpu.cfs_quota_us"))
+func (c *cgroupV1) cpuQuota() (float64, error) {
+	quotaUs, err := c.cpuQuotaUs()
 	if err != nil {
 		return 0, err
 	}
 
-	return strconv.ParseInt(data, 10, 64)
+	if quotaUs == -1 {
+		return -1, nil
+	}
+
+	periodUs, err := c.cpuPeriodUs()
+	if err != nil {
+		return 0, err
+	}
+
+	return float64(quotaUs) / float64(periodUs), nil
 }
 
 // cgroup v1 查看文件 /sys/fs/cgroup/cpu/cpu.cfs_period_us
@@ -69,16 +82,16 @@ func (c *cgroupV1) cpuPeriodUs() (uint64, error) {
 	return parseUint(data)
 }
 
-func (c *cgroupV1) cpus() ([]uint64, error) {
-	data, err := iox.ReadText(path.Join(c.cgroups["cpuset"], "cpuset.cpus"))
+func (c *cgroupV1) cpuQuotaUs() (int64, error) {
+	data, err := iox.ReadText(path.Join(c.cgroups["cpu"], "cpu.cfs_quota_us"))
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return parseUints(data)
+	return strconv.ParseInt(data, 10, 64)
 }
 
-func (c *cgroupV1) usageAllCpus() (uint64, error) {
+func (c *cgroupV1) cpuUsage() (uint64, error) {
 	data, err := iox.ReadText(path.Join(c.cgroups["cpuacct"], "cpuacct.usage"))
 	if err != nil {
 		return 0, err
@@ -87,44 +100,73 @@ func (c *cgroupV1) usageAllCpus() (uint64, error) {
 	return parseUint(data)
 }
 
+func (c *cgroupV1) effectiveCpus() (int, error) {
+	data, err := iox.ReadText(path.Join(c.cgroups["cpuset"], "cpuset.cpus"))
+	if err != nil {
+		return 0, err
+	}
+
+	cpus, err := parseUints(data)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(cpus), nil
+}
+
 type cgroupV2 struct {
 	cgroups map[string]string
 }
 
-func (c *cgroupV2) cpuQuotaUs() (int64, error) {
-	data, err := iox.ReadText(path.Join(cgroupDir, "cpu.cfs_quota_us"))
+func (c *cgroupV2) cpuQuota() (float64, error) {
+	data, err := iox.ReadText(cpuMaxFile)
 	if err != nil {
 		return 0, err
 	}
 
-	return strconv.ParseInt(data, 10, 64)
-}
+	fields := strings.Fields(data)
+	if len(fields) != 2 {
+		return 0, fmt.Errorf("cgroup: bad /sys/fs/cgroup/cpu.max file: %s", data)
+	}
 
-func (c *cgroupV2) cpuPeriodUs() (uint64, error) {
-	data, err := iox.ReadText(path.Join(cgroupDir, "cpu.cfs_period_us"))
+	if fields[0] == "max" {
+		return -1, nil
+	}
+
+	quotaUs, err := strconv.ParseInt(fields[0], 10, 64)
 	if err != nil {
 		return 0, err
 	}
 
-	return parseUint(data)
-}
-
-func (c *cgroupV2) cpus() ([]uint64, error) {
-	data, err := iox.ReadText(cpusetFile)
+	periodUs, err := strconv.ParseUint(fields[1], 10, 64)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	return parseUints(data)
+	return float64(quotaUs) / float64(periodUs), nil
 }
 
-func (c *cgroupV2) usageAllCpus() (uint64, error) {
+func (c *cgroupV2) cpuUsage() (uint64, error) {
 	usec, err := parseUint(c.cgroups["usage_usec"])
 	if err != nil {
 		return 0, err
 	}
 
 	return usec * uint64(time.Microsecond), nil
+}
+
+func (c *cgroupV2) effectiveCpus() (int, error) {
+	data, err := iox.ReadText(cpusetFile)
+	if err != nil {
+		return 0, err
+	}
+
+	cpus, err := parseUints(data)
+	if err != nil {
+		return 0, err
+	}
+
+	return len(cpus), nil
 }
 
 func currentCgroupV1() (cgroup, error) {
@@ -205,7 +247,7 @@ func isCgroup2UnifiedMode() bool {
 func parseUint(s string) (uint64, error) {
 	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		if err.(*strconv.NumError).Err == strconv.ErrRange {
+		if errors.Is(err, strconv.ErrRange) {
 			return 0, nil
 		}
 
@@ -231,21 +273,21 @@ func parseUints(val string) ([]uint64, error) {
 	for _, r := range cols {
 		if strings.Contains(r, "-") {
 			fields := strings.SplitN(r, "-", 2)
-			min, err := parseUint(fields[0])
+			minimum, err := parseUint(fields[0])
 			if err != nil {
 				return nil, fmt.Errorf("cgroup: bad int list format: %s", val)
 			}
 
-			max, err := parseUint(fields[1])
+			maximum, err := parseUint(fields[1])
 			if err != nil {
 				return nil, fmt.Errorf("cgroup: bad int list format: %s", val)
 			}
 
-			if max < min {
+			if maximum < minimum {
 				return nil, fmt.Errorf("cgroup: bad int list format: %s", val)
 			}
 
-			for i := min; i <= max; i++ {
+			for i := minimum; i <= maximum; i++ {
 				if _, ok := ints[i]; !ok {
 					ints[i] = lang.Placeholder
 					sets = append(sets, i)

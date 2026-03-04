@@ -9,6 +9,7 @@ import (
 
 	"github.com/zeromicro/go-zero/core/collection"
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/mathx"
 	"github.com/zeromicro/go-zero/core/stat"
 	"github.com/zeromicro/go-zero/core/syncx"
 	"github.com/zeromicro/go-zero/core/timex"
@@ -21,8 +22,11 @@ const (
 	defaultCpuThreshold = 900
 	defaultMinRt        = float64(time.Second / time.Millisecond)
 	// moving average hyperparameter beta for calculating requests on the fly
-	flyingBeta      = 0.9
-	coolOffDuration = time.Second
+	flyingBeta               = 0.9
+	coolOffDuration          = time.Second
+	cpuMax                   = 1000 // millicpu
+	millisecondsPerSecond    = 1000
+	overloadFactorLowerBound = 0.1
 )
 
 var (
@@ -72,21 +76,21 @@ type (
 	}
 
 	adaptiveShedder struct {
-		cpuThreshold int64
-		windows      int64
+		cpuThreshold    int64
+		windowScale     float64
 		// 正在处理中的请求数量
-		flying int64
+		flying          int64
 		// 处理中请求的滑动平均值（滞后于flying）
-		avgFlying     float64
-		avgFlyingLock syncx.SpinLock
+		avgFlying       float64
+		avgFlyingLock   syncx.SpinLock
 		// 记录的是cpu最近一次判断过载的时间
-		overloadTime *syncx.AtomicDuration
+		overloadTime    *syncx.AtomicDuration
 		// 用于标识上一次的请求是否被drop(用于快速判断是否为冷却期： 如果上一次的请求没有drop， 则标识已经过了冷却期。 如果上一次请求被drop则还要做具体判断)
 		droppedRecently *syncx.AtomicBool
 		// 请求通过 （滑动窗口，可以防止毛刺）
-		passCounter *collection.RollingWindow
+		passCounter     *collection.RollingWindow[int64, *collection.Bucket[int64]]
 		// 请求消耗的时间 （滑动窗口，可以防止毛刺）
-		rtCounter *collection.RollingWindow
+		rtCounter       *collection.RollingWindow[int64, *collection.Bucket[int64]]
 	}
 )
 
@@ -116,16 +120,16 @@ func NewAdaptiveShedder(opts ...ShedderOption) Shedder {
 		opt(&options)
 	}
 	bucketDuration := options.window / time.Duration(options.buckets)
+	newBucket := func() *collection.Bucket[int64] {
+		return new(collection.Bucket[int64])
+	}
 	return &adaptiveShedder{
-		cpuThreshold: options.cpuThreshold,
-		// 把时间窗口又缩减到1s中内，得出桶的数量，这是干什么
-		windows:         int64(time.Second / bucketDuration),
+		cpuThreshold:    options.cpuThreshold,
+		windowScale:     float64(time.Second) / float64(bucketDuration) / millisecondsPerSecond,
 		overloadTime:    syncx.NewAtomicDuration(),
 		droppedRecently: syncx.NewAtomicBool(),
-		passCounter: collection.NewRollingWindow(options.buckets, bucketDuration,
-			collection.IgnoreCurrentBucket()),
-		rtCounter: collection.NewRollingWindow(options.buckets, bucketDuration,
-			collection.IgnoreCurrentBucket()),
+		passCounter:     collection.NewRollingWindow[int64, *collection.Bucket[int64]](newBucket, options.buckets, bucketDuration, collection.IgnoreCurrentBucket[int64, *collection.Bucket[int64]]()),
+		rtCounter:       collection.NewRollingWindow[int64, *collection.Bucket[int64]](newBucket, options.buckets, bucketDuration, collection.IgnoreCurrentBucket[int64, *collection.Bucket[int64]]()),
 	}
 }
 
@@ -151,10 +155,10 @@ func (as *adaptiveShedder) addFlying(delta int64) {
 	// 增加delta，并返回修改后的值， 即flying是目前正在处理中的请求值
 	flying := atomic.AddInt64(&as.flying, delta)
 	// update avgFlying when the request is finished.
-	// this strategy makes avgFlying have a little bit lag against flying, and smoother.
+	// this strategy makes avgFlying have a little bit of lag against flying, and smoother.
 	// when the flying requests increase rapidly, avgFlying increase slower, accept more requests.
-	// when the flying requests drop rapidly, avgFlying drop slower, accept less requests.
-	// it makes the service to serve as more requests as possible.
+	// when the flying requests drop rapidly, avgFlying drop slower, accept fewer requests.
+	// it makes the service to serve as many requests as possible.
 	// 请求结束时， 更新aveFlying
 	// avgFlying策略，相对于flying具有一点点滞后性，avgFlying更平滑
 	// 当 flying的数量快速增加， avgFlying缓慢增加时，可以接受更多的请求
@@ -181,11 +185,11 @@ func (as *adaptiveShedder) highThru() bool {
 	as.avgFlyingLock.Lock()
 	avgFlying := as.avgFlying
 	as.avgFlyingLock.Unlock()
-	maxFlight := as.maxFlight()
-	return int64(avgFlying) > maxFlight && atomic.LoadInt64(&as.flying) > maxFlight
+	maxFlight := as.maxFlight() * as.overloadFactor()
+	return avgFlying > maxFlight && float64(atomic.LoadInt64(&as.flying)) > maxFlight
 }
 
-func (as *adaptiveShedder) maxFlight() int64 {
+func (as *adaptiveShedder) maxFlight() float64 {
 	// windows = buckets per second
 	// maxQPS = maxPASS * windows
 	// minRT = min average response time in milliseconds
@@ -193,40 +197,51 @@ func (as *adaptiveShedder) maxFlight() int64 {
 	// 含义是，桶内最大的qps * 1s内的窗口的桶的数量， 得到整个窗口中，1s内的qps的极值， 再乘以最小平均延迟，得到xxx
 	// 再除以1e3(1e3=1000)，转换成秒
 	//
-	return int64(math.Max(1, float64(as.maxPass()*as.windows)*(as.minRt()/1e3)))
+	// allowedFlying = maxQPS * minRT / milliseconds_per_second
+	maxFlight := float64(as.maxPass()) * as.minRt() * as.windowScale
+	return mathx.AtLeast(maxFlight, 1)
 }
 
 // 获取滑动窗口的所有桶中，数量最大的桶， 即请求通过数量最大的桶
 func (as *adaptiveShedder) maxPass() int64 {
-	var result float64 = 1
+	var result int64 = 1
 
-	as.passCounter.Reduce(func(b *collection.Bucket) {
+	as.passCounter.Reduce(func(b *collection.Bucket[int64]) {
 		if b.Sum > result {
 			result = b.Sum
 		}
 	})
 
-	return int64(result)
+	return result
 }
 
 // 获取滑动窗口的所有桶中，请求平均时间最小的值
 func (as *adaptiveShedder) minRt() float64 {
+	// if no requests in previous windows, return defaultMinRt,
+	// its a reasonable large value to avoid dropping requests.
 	result := defaultMinRt
 
-	as.rtCounter.Reduce(func(b *collection.Bucket) {
+	as.rtCounter.Reduce(func(b *collection.Bucket[int64]) {
 		if b.Count <= 0 {
 			return
 		}
 		// b.Sum 表示一个桶内，所有请求消耗的总的时间，单位毫秒
 		// b.Count 表示一个桶内，请求的总数量
 		// 相处得到的avg，表示得到的平均时间
-		avg := math.Round(b.Sum / float64(b.Count))
+		avg := math.Round(float64(b.Sum) / float64(b.Count))
 		if avg < result {
 			result = avg
 		}
 	})
 
 	return result
+}
+
+func (as *adaptiveShedder) overloadFactor() float64 {
+	// as.cpuThreshold must be less than cpuMax
+	factor := (cpuMax - float64(stat.CpuUsage())) / (cpuMax - float64(as.cpuThreshold))
+	// at least accept 10% of acceptable requests, even cpu is highly overloaded.
+	return mathx.Between(factor, overloadFactorLowerBound, 1)
 }
 
 func (as *adaptiveShedder) shouldDrop() bool {
@@ -285,14 +300,14 @@ func (as *adaptiveShedder) systemOverloaded() bool {
 	return true
 }
 
-// WithBuckets customizes the Shedder with given number of buckets.
+// WithBuckets customizes the Shedder with the given number of buckets.
 func WithBuckets(buckets int) ShedderOption {
 	return func(opts *shedderOptions) {
 		opts.buckets = buckets
 	}
 }
 
-// WithCpuThreshold customizes the Shedder with given cpu threshold.
+// WithCpuThreshold customizes the Shedder with the given cpu threshold.
 func WithCpuThreshold(threshold int64) ShedderOption {
 	return func(opts *shedderOptions) {
 		opts.cpuThreshold = threshold
@@ -327,7 +342,7 @@ func (p *promise) Pass() {
 	// 当前正在处理的请求数-1
 	p.shedder.addFlying(-1)
 	// 滑动窗口记录，本次请求消耗时间
-	p.shedder.rtCounter.Add(math.Ceil(rt))
+	p.shedder.rtCounter.Add(int64(math.Ceil(rt)))
 	// 滑动窗口记录，请求成功的数量
 	p.shedder.passCounter.Add(1)
 }

@@ -29,6 +29,7 @@ func NewRpcPubServer(etcd discov.EtcdConf, listenOn string, middlewares ServerMi
 		if etcd.HasID() {
 			pubOpts = append(pubOpts, discov.WithId(etcd.ID))
 		}
+		// 服务注册
 		pubClient := discov.NewPublisher(etcd.Hosts, etcd.Key, pubListenOn, pubOpts...)
 		return pubClient.KeepAlive()
 	}

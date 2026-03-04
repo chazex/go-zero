@@ -129,7 +129,7 @@ func (p *Publisher) doRegister() (internal.EtcdClient, error) {
 
 func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 	// cli是原生的etcd client.
-	// 保持租约
+	// KeepAlive方法用来续租， 他会持续的续租，续租下响应可以通过返回的channel获得。
 	ch, err := cli.KeepAlive(cli.Ctx(), p.lease)
 	if err != nil {
 		return err
@@ -154,7 +154,7 @@ func (p *Publisher) keepAliveAsync(cli internal.EtcdClient) error {
 				p.revoke(cli)
 				select {
 				case <-p.resumeChan:
-					// 接收到恢复指令：目前没找到那里会下发这个指令
+					// 接收到恢复指令：目前没找到哪里会下发这个指令
 					if err := p.doKeepAlive(); err != nil {
 						logx.Errorf("etcd publisher KeepAlive: %s", err.Error())
 					}

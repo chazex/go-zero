@@ -29,7 +29,7 @@ func MaxConnsHandler(n int) func(http.Handler) http.Handler {
 				defer func() {
 					// 返还token
 					if err := latch.Return(); err != nil {
-						logx.Error(err)
+						logx.WithContext(r.Context()).Error(err)
 					}
 				}()
 

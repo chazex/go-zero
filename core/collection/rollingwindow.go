@@ -4,19 +4,29 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zeromicro/go-zero/core/mathx"
 	"github.com/zeromicro/go-zero/core/timex"
 )
 
 type (
-	// RollingWindowOption let callers customize the RollingWindow.
-	RollingWindowOption func(rollingWindow *RollingWindow)
+	// BucketInterface is the interface that defines the buckets.
+	BucketInterface[T Numerical] interface {
+		Add(v T)
+		Reset()
+	}
 
-	// RollingWindow defines a rolling window to calculate the events in buckets with time interval.
-	RollingWindow struct {
+	// Numerical is the interface that restricts the numerical type.
+	Numerical = mathx.Numerical
+
+	// RollingWindowOption let callers customize the RollingWindow.
+	RollingWindowOption[T Numerical, B BucketInterface[T]] func(rollingWindow *RollingWindow[T, B])
+
+	// RollingWindow defines a rolling window to calculate the events in buckets with the time interval.
+	RollingWindow[T Numerical, B BucketInterface[T]] struct {
 		lock sync.RWMutex
 		// 桶个数, 多个桶连起来就是完整的时间窗
 		size int
-		win  *window
+		win  *window[T, B]
 		// 每个桶对应的时间范围
 		interval time.Duration
 		// 当前指向桶的索引号
@@ -28,14 +38,15 @@ type (
 
 // NewRollingWindow returns a RollingWindow that with size buckets and time interval,
 // use opts to customize the RollingWindow.
-func NewRollingWindow(size int, interval time.Duration, opts ...RollingWindowOption) *RollingWindow {
+func NewRollingWindow[T Numerical, B BucketInterface[T]](newBucket func() B, size int,
+	interval time.Duration, opts ...RollingWindowOption[T, B]) *RollingWindow[T, B] {
 	if size < 1 {
 		panic("size must be greater than 0")
 	}
 
-	w := &RollingWindow{
+	w := &RollingWindow[T, B]{
 		size:     size,
-		win:      newWindow(size),
+		win:      newWindow[T, B](newBucket, size),
 		interval: interval,
 		lastTime: timex.Now(),
 	}
@@ -46,7 +57,7 @@ func NewRollingWindow(size int, interval time.Duration, opts ...RollingWindowOpt
 }
 
 // Add adds value to current bucket.
-func (rw *RollingWindow) Add(v float64) {
+func (rw *RollingWindow[T, B]) Add(v T) {
 	rw.lock.Lock()
 	defer rw.lock.Unlock()
 	// 滑动的动作发生在此
@@ -57,13 +68,13 @@ func (rw *RollingWindow) Add(v float64) {
 // Reduce函数的作用是，排除掉当前时间和上次时间之间的桶之后，把剩下的所有桶做统计
 
 // Reduce runs fn on all buckets, ignore current bucket if ignoreCurrent was set.
-func (rw *RollingWindow) Reduce(fn func(b *Bucket)) {
+func (rw *RollingWindow[T, B]) Reduce(fn func(b B)) {
 	rw.lock.RLock()
 	defer rw.lock.RUnlock()
 
 	var diff int
 	span := rw.span()
-	// ignore current bucket, because of partial data
+	// ignore the current bucket, because of partial data
 	if span == 0 && rw.ignoreCurrent {
 		diff = rw.size - 1
 	} else {
@@ -75,7 +86,7 @@ func (rw *RollingWindow) Reduce(fn func(b *Bucket)) {
 	}
 }
 
-func (rw *RollingWindow) span() int {
+func (rw *RollingWindow[T, B]) span() int {
 	// offset  = 时间差 / 间隔, 此时offset代表，有多少个interval， offset >= 0， 并且小于size， 则直接使用offset， 否则使用size
 	offset := int(timex.Since(rw.lastTime) / rw.interval)
 	if 0 <= offset && offset < rw.size {
@@ -86,7 +97,7 @@ func (rw *RollingWindow) span() int {
 	return rw.size
 }
 
-func (rw *RollingWindow) updateOffset() {
+func (rw *RollingWindow[T, B]) updateOffset() {
 	span := rw.span()
 	if span <= 0 {
 		return
@@ -107,21 +118,21 @@ func (rw *RollingWindow) updateOffset() {
 }
 
 // Bucket defines the bucket that holds sum and num of additions.
-type Bucket struct {
+type Bucket[T Numerical] struct {
 	// 成功总数
-	Sum float64
+	Sum T
 	// 成功 + 失败总数
 	Count int64
 }
 
-func (b *Bucket) add(v float64) {
+func (b *Bucket[T]) Add(v T) {
 	// 如果失败时，可以使用v为0
 	b.Sum += v
 	// 每次都加1
 	b.Count++
 }
 
-func (b *Bucket) reset() {
+func (b *Bucket[T]) Reset() {
 	b.Sum = 0
 	b.Count = 0
 }
@@ -129,44 +140,44 @@ func (b *Bucket) reset() {
 // window对象，仅仅是一堆桶的集合，每个桶有一个编号，可以按照桶的编号对桶做一些操作，如清空桶，对桶里面的统计数据+1，做聚合等。
 // 它本身并不做窗口滑动的操作。
 
-type window struct {
-	buckets []*Bucket
+type window[T Numerical, B BucketInterface[T]] struct {
+	buckets []B
 	size    int
 }
 
-func newWindow(size int) *window {
-	buckets := make([]*Bucket, size)
+func newWindow[T Numerical, B BucketInterface[T]](newBucket func() B, size int) *window[T, B] {
+	buckets := make([]B, size)
 	for i := 0; i < size; i++ {
-		buckets[i] = new(Bucket)
+		buckets[i] = newBucket()
 	}
-	return &window{
+	return &window[T, B]{
 		buckets: buckets,
 		size:    size,
 	}
 }
 
-func (w *window) add(offset int, v float64) {
+func (w *window[T, B]) add(offset int, v T) {
 	// 往指定的 bucket 加入指定的指标
-	w.buckets[offset%w.size].add(v)
+	w.buckets[offset%w.size].Add(v)
 }
 
 // start 桶的开始索引
 // count 桶的数量，即从start开始数几个桶
 // start = 3, count = 10, 则从[3-12] % size
-func (w *window) reduce(start, count int, fn func(b *Bucket)) {
+func (w *window[T, B]) reduce(start, count int, fn func(b B)) {
 	for i := 0; i < count; i++ {
 		fn(w.buckets[(start+i)%w.size])
 	}
 }
 
-func (w *window) resetBucket(offset int) {
+func (w *window[T, B]) resetBucket(offset int) {
 	// 这里取余的原因是，担心给的offset太大，超过了w.size。取余就可以当作一个环来处理了。
-	w.buckets[offset%w.size].reset()
+	w.buckets[offset%w.size].Reset()
 }
 
 // IgnoreCurrentBucket lets the Reduce call ignore current bucket.
-func IgnoreCurrentBucket() RollingWindowOption {
-	return func(w *RollingWindow) {
+func IgnoreCurrentBucket[T Numerical, B BucketInterface[T]]() RollingWindowOption[T, B] {
+	return func(w *RollingWindow[T, B]) {
 		w.ignoreCurrent = true
 	}
 }

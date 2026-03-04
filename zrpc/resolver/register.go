@@ -1,8 +1,6 @@
 package resolver
 
-import (
-	"github.com/zeromicro/go-zero/zrpc/resolver/internal"
-)
+import "github.com/zeromicro/go-zero/zrpc/resolver/internal"
 
 // 把这个单独放在一个包中，可以使第三方手动注册
 
